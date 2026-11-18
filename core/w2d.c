@@ -5,6 +5,7 @@
  * and games program. Supports solid fills, memory-to-memory blits with ROP3, mono->colour
  * expansion from host data, colour-key transparency and clipping, at 8/16 bpp. */
 #include "zodiac.h"
+#include "state.h"
 #include "w4200.h"
 #include "cpu.h"
 #include <stdio.h>
@@ -346,3 +347,5 @@ int w2d_packet3(uint32_t op, const uint32_t *d, uint32_t n) {
     }
     return 0;
 }
+
+void w2d_state(StateIO *s) { ST(s, hb); }

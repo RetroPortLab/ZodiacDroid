@@ -9,6 +9,7 @@
  *   +0x800000  external SDRAM (8MB, chip address 0x800000-0xFFFFFF)
  */
 #include "zodiac.h"
+#include "state.h"
 #include "cpu.h"
 #include "io.h"
 #include "w4200.h"
@@ -253,4 +254,11 @@ void w4200_scanout(void) {
         }
     }
     zod.frame_ready = 1;
+}
+
+void w4200_state(StateIO *s) {
+    ST(s, w42.hif); ST(s, w42.reg); ST(s, w42.aux);
+    st_bytes(s, w42.imem, W42_IMEM_SIZE);
+    st_bytes(s, w42.emem, W42_EMEM_SIZE);
+    ST(s, adc_seq);
 }

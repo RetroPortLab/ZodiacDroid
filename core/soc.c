@@ -1,5 +1,6 @@
 /* ZodiacDroid - other i.MX1 on-chip blocks: I2C (with the board's I2C devices), and stubs */
 #include "zodiac.h"
+#include "state.h"
 #include "cpu.h"
 #include "io.h"
 #include <stdio.h>
@@ -185,3 +186,12 @@ void soc_write(uint32_t off, uint32_t v, uint32_t old) {
 }
 
 void soc_tick(int cycles) { (void)cycles; }
+
+void soc_state(StateIO *s) {
+    ST(s, n_i2c_devs);
+    for (int i = 0; i < 8; i++) { ST(s, i2c_devs[i].addr); ST(s, i2c_devs[i].mem); ST(s, i2c_devs[i].ptr); ST(s, i2c_devs[i].got_ptr); }
+    int cur = i2c_cur ? (int)(i2c_cur - i2c_devs) : -1;
+    ST(s, i2c_active); ST(s, i2c_rw); ST(s, i2c_first); ST(s, cur); ST(s, i2c_rx);
+    if (s->loading) i2c_cur = cur >= 0 && cur < 8 ? &i2c_devs[cur] : NULL;
+    ST(s, pen_down); ST(s, pen_x); ST(s, pen_y); ST(s, asp_pos);
+}

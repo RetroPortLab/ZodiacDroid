@@ -41,6 +41,9 @@ int  zod_load_rom(const uint8_t *data, size_t len, char *err, size_t errlen);
 void zod_reset(void);
 void zod_run_frame(void);            /* one 1/60s slice */
 void zod_touch(int x, int y, int down);   /* screen coordinates 0..479 x 0..319 */
+/* save states (zlib-compressed); zod_save_state returns a malloc'd buffer */
+size_t zod_save_state(uint8_t **out);
+int    zod_load_state(const uint8_t *data, size_t len);  /* after zod_load_rom; 1 = ok */
 void zod_stick(int x, int y);             /* analog controller, -32767..32767, right/down positive */
 
 /* patch.c */

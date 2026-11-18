@@ -65,7 +65,7 @@ static void shot(const char *path) {
 
 int main(int argc, char **argv) {
     if (argc < 2) { fprintf(stderr, "usage: runzod rom [frames] [--io N] [--trace N] [--shot out.ppm]\n"); return 1; }
-    int frames = 60; const char *shotp = NULL; uint32_t trace = 0, dumpa = 0, dumpn = 0;
+    int frames = 60; const char *shotp = NULL, *savep = NULL, *loadp = NULL; uint32_t trace = 0, dumpa = 0, dumpn = 0;
     for (int i = 2; i < argc; i++) {
         if (!strcmp(argv[i], "--io") && i + 1 < argc) { zod.log_io = 1; zod.log_limit = atoi(argv[++i]); }
         else if (!strcmp(argv[i], "--filter") && i + 1 < argc) zod.log_filter = strtoul(argv[++i], 0, 0);
@@ -75,6 +75,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--2d2")) zod.log_2d = 2;
         else if (!strcmp(argv[i], "--trace") && i + 1 < argc) trace = strtoul(argv[++i], 0, 0);
         else if (!strcmp(argv[i], "--shot") && i + 1 < argc) shotp = argv[++i];
+        else if (!strcmp(argv[i], "--save") && i + 1 < argc) savep = argv[++i];
+        else if (!strcmp(argv[i], "--load") && i + 1 < argc) loadp = argv[++i];
         else if (!strcmp(argv[i], "--dump") && i + 2 < argc) { dumpa = strtoul(argv[++i], 0, 0); dumpn = strtoul(argv[++i], 0, 0); }
         else frames = atoi(argv[i]);
     }
@@ -85,6 +87,11 @@ int main(int argc, char **argv) {
     zod.model = 2;
     zod_reset();
     cpu.trace_n = trace;
+    if (loadp) {
+        size_t sl; uint8_t *sd = slurp(loadp, &sl);
+        if (!sd || !zod_load_state(sd, sl)) { fprintf(stderr, "cannot load state %s\n", loadp); return 1; }
+        free(sd);
+    }
     if (getenv("HOOKS")) {
         patches_install(hook);
         char *p = getenv("HOOKS");
@@ -150,6 +157,12 @@ int main(int argc, char **argv) {
         for (uint32_t r = a; r < b; r += 4) fprintf(stderr, "%04x: %08x%s", r, w42.reg[r >> 2], ((r - a) & 0xC) == 0xC ? "\n" : "  "); }
     if (getenv("W42MEM")) { FILE *f = fopen(getenv("W42MEM"), "wb"); fwrite(w42.imem, 1, W42_IMEM_SIZE, f); fwrite(w42.emem, 1, W42_EMEM_SIZE, f); fclose(f); }
     if (zod.prof) prof_dump();
+    if (savep) {
+        uint8_t *sd; size_t sl = zod_save_state(&sd);
+        FILE *f = sl ? fopen(savep, "wb") : NULL;
+        if (f) { fwrite(sd, 1, sl, f); fclose(f); fprintf(stderr, "saved state: %zu bytes\n", sl); free(sd); }
+        else fprintf(stderr, "save failed\n");
+    }
     if (getenv("RAMDUMP")) { FILE *f = fopen(getenv("RAMDUMP"), "wb"); fwrite(zod.sdram, 1, SDRAM_SIZE, f); fclose(f); }
     if (shotp) shot(shotp);
     return 0;

@@ -2,6 +2,7 @@
  * AITC interrupt controller, GPT timers, RTC, UARTs, CRM, GPIO; everything else is a
  * plain register file. External chip selects go to ext.c (W4200 etc). */
 #include "zodiac.h"
+#include "state.h"
 #include "cpu.h"
 #include "io.h"
 #include <stdio.h>
@@ -435,4 +436,17 @@ void io_tick(int cycles) {
     rtc_sync();
     soc_tick(cycles);
     ext_tick(cycles);
+}
+
+void rtc_advance(int64_t sec) { if (sec > 0) rtc_base_sec += (uint64_t)sec; }
+
+void io_state(StateIO *s) {
+    ST(s, src_level); ST(s, src_force); ST(s, enabled); ST(s, fiqtype); ST(s, prio); ST(s, nimask);
+    for (int i = 0; i < 2; i++) {
+        ST(s, gpt[i].tctl); ST(s, gpt[i].tprer); ST(s, gpt[i].tcmp); ST(s, gpt[i].tstat); ST(s, gpt[i].tstat_read);
+        ST(s, gpt[i].count_fp); ST(s, gpt[i].last_cycle);
+    }
+    ST(s, rtc_base_sec); ST(s, rtc_isr); ST(s, rtc_last_ms);
+    ST(s, gpio_in); ST(s, gpio_isr);
+    if (s->loading) aitc_update();
 }

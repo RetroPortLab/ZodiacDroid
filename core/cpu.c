@@ -1,6 +1,8 @@
+#include <stddef.h>
 /* ZodiacDroid - ARM920T CPU core: ARMv4T ARM + Thumb interpreter, CP15, MMU with a soft TLB.
  * Written from the ARM Architecture Reference Manual; no code from other emulators. */
 #include "cpu.h"
+#include "state.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -931,4 +933,9 @@ int cpu_run(int cycles) {
     cpu.cycles += done;
     cpu.run_len = cpu.budget = 0;
     return done;
+}
+
+void cpu_state(StateIO *s) {
+    st_bytes(s, &cpu, offsetof(Cpu, tlb_r));      /* registers, banks, CP15, timing */
+    ST(s, pf_lo); ST(s, pf_hi); ST(s, pf_ctrl);
 }

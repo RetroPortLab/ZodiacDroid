@@ -1,5 +1,6 @@
 /* ZodiacDroid - devices on the external chip selects */
 #include "zodiac.h"
+#include "state.h"
 #include "cpu.h"
 #include "io.h"
 #include "w4200.h"
@@ -30,3 +31,5 @@ void ext_write(uint32_t pa, uint32_t v, int size) {
 }
 
 void ext_tick(int cycles) { (void)cycles; }
+
+void ext_state(StateIO *s) { ST(s, scratch); }
