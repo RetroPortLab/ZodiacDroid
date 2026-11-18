@@ -248,7 +248,7 @@ static void host_data(uint32_t v) {
         }
     } else if (hb.bpp == 16) {
         host_pixel(v & 0xFFFF, 0);
-        if (hb.active) host_pixel(v >> 16, 0);
+        if (hb.active && hb.cx != 0) host_pixel(v >> 16, 0);   /* rows are padded to a dword */
     } else if (hb.bpp == 8) {
         for (int b = 0; b < 4 && hb.active; b++) host_pixel((v >> (b * 8)) & 0xFF, 0);
     } else host_pixel(v, 0);
@@ -288,17 +288,39 @@ void w2d_write(uint32_t r, uint32_t v) {
     }
 }
 
-/* Type-3 command processor packets. Opcodes are identified from the DAL's command streams. */
+/* Type-3 command processor packets. These follow the Radeon PM4 2D packets (with W100
+ * opcode numbers): coordinates are (x<<16)|y and sizes (w<<16)|h, except HOSTDATA which
+ * uses the DST_Y_X / DST_HEIGHT_WIDTH register order. */
 int w2d_packet3(uint32_t op, const uint32_t *d, uint32_t n) {
     switch (op) {
-    case 0x1A:   /* PAINT: DST_Y_X, DST_WIDTH_HEIGHT */
+    case 0x19: { /* HOSTDATA_BLT: DST_Y_X, DST_HEIGHT_WIDTH, pixel data */
         if (n < 2) return 0;
         R(DST_Y_X) = d[0];
-        trigger((int)(d[0] & 0xFFFF), (int)(d[0] >> 16), (int)(d[1] >> 16), (int)(d[1] & 0xFFFF));
+        int x = (int)(d[0] & 0xFFFF), y = (int)(d[0] >> 16), w = (int)(d[1] & 0xFFFF), h = (int)(d[1] >> 16);
+        if (zod.log_2d) fprintf(stderr, "[2D] hostdata dst=%08x/%u (%d,%d %dx%d) n=%u gmc=%08x\n", R(DST_OFFSET), R(DST_PITCH) & 0x3FFF, x, y, w, h, n, GMC);
+        start_hostdata(x, y, w, h);
+        for (uint32_t i = 2; i < n && hb.active; i++) host_data(d[i]);
+        hb.active = 0;
+        return 1;
+    }
+    case 0x1A:   /* PAINT: DST_X_Y, WIDTH_HEIGHT */
+        if (n < 2) return 0;
+        trigger((int)(d[0] >> 16), (int)(d[0] & 0xFFFF), (int)(d[1] >> 16), (int)(d[1] & 0xFFFF));
+        return 1;
+    case 0x1B:   /* BITBLT: SRC_X_Y, DST_X_Y, WIDTH_HEIGHT */
+        if (n < 3) return 0;
+        R(SRC_Y_X) = ((d[0] & 0xFFFF) << 16) | (d[0] >> 16);
+        trigger((int)(d[1] >> 16), (int)(d[1] & 0xFFFF), (int)(d[2] >> 16), (int)(d[2] & 0xFFFF));
+        return 1;
+    case 0x1C:   /* TRANS_BITBLT: CLR_CMP_CNTL, CLR_CMP_CLR_SRC, CLR_CMP_CLR_DST, SRC_X_Y, DST_X_Y, WIDTH_HEIGHT */
+        if (n < 6) return 0;
+        R(CLR_CMP_CNTL) = d[0]; R(CLR_CMP_CLR_SRC) = d[1]; R(CLR_CMP_CLR_DST) = d[2];
+        R(SRC_Y_X) = ((d[3] & 0xFFFF) << 16) | (d[3] >> 16);
+        trigger((int)(d[4] >> 16), (int)(d[4] & 0xFFFF), (int)(d[5] >> 16), (int)(d[5] & 0xFFFF));
         return 1;
     }
     if (zod.log_2d) {
-        fprintf(stderr, "[2D] packet3 %02x:", op);
+        fprintf(stderr, "[2D] packet3 %02x n=%u:", op, n);
         for (uint32_t i = 0; i < n && i < 16; i++) fprintf(stderr, " %08x", d[i]);
         fprintf(stderr, "\n");
     }

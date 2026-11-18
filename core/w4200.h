@@ -3,7 +3,7 @@
 #include <stdint.h>
 
 #define W42_IMEM_BASE 0x100000u
-#define W42_IMEM_SIZE 0x060000u     /* 384KB internal SRAM */
+#define W42_IMEM_SIZE 0x0D0000u     /* internal memory window (host 0x30000-0xFFFFF); 384KB is SRAM, the DAL also uses the rest */
 #define W42_EMEM_BASE 0x800000u
 #define W42_EMEM_SIZE 0x800000u     /* 8MB external SDRAM */
 

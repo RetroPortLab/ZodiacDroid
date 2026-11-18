@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdlib.h>
 
 W4200 w42;
 
@@ -41,9 +42,16 @@ uint8_t *w42_ptr(uint32_t a) {
     return NULL;
 }
 
-/* host (CS5 offset) -> chip address; 0xFFFFFFFF if not memory */
+/* host (CS5 offset) -> chip address; 0xFFFFFFFF if not memory.
+ * CPU writes inside the WRAP window (WRAP_START_DIR..WRAP_TOP_DIR, in 16-bit units) wrap
+ * around inside the buffer described by WRAP_BUF_A; the DAL streams CP packets through it. */
 static uint32_t host_to_chip(uint32_t off) {
     off &= 0xFFFFFF;
+    uint32_t wlo = (REG(0x14) & 0xFFFFF) * 2, whi = (REG(0x10) & 0xFFFFF) * 2 + 2;
+    if (wlo && off >= wlo && off < whi) {
+        uint32_t wa = REG(0x08), size = 0x1000u << ((wa >> 24) & 15);
+        return (wa & 0xFFFFFF) + ((off - wlo) & (size - 1));
+    }
     if (off - 0x30000 < W42_IMEM_SIZE) return off - 0x30000 + W42_IMEM_BASE;   /* window used for the CP ring */
     if (off - W42_IMEM_BASE < W42_IMEM_SIZE) return off;                        /* 1:1 (as on the W100) */
     if (off >= W42_EMEM_BASE) return off;
@@ -75,8 +83,12 @@ static void cp_run(void) {
     int guard = 0;
     while (rp != wp && guard++ < 1000000) {
         uint32_t h = ((uint32_t *)ring)[rp];
-        rp = (rp + 1) & mask;
         uint32_t type = h >> 30, cnt = ((h >> 16) & 0x3FFF) + 1;
+        uint32_t need = type == 2 ? 1 : type == 1 ? 3 : cnt + 1;
+        uint32_t avail = (wp - rp) & mask;
+        if (need > avail) break;            /* packet still being written: wait for the rest */
+        if (getenv("CPWRAP") && rp + need > mask + 1) fprintf(stderr, "[CP] packet %08x crosses ring end at rp=%x need=%x wp=%x  start=%08x %08x  beyond=%08x %08x\n", h, rp, need, wp, ((uint32_t *)ring)[0], ((uint32_t *)ring)[1], ((uint32_t *)ring)[mask + 1], ((uint32_t *)ring)[mask + 2]);
+        rp = (rp + 1) & mask;
         if (type == 0) {
             uint32_t reg = (h & 0x1FFF) << 2;
             for (uint32_t i = 0; i < cnt; i++) {
@@ -92,9 +104,9 @@ static void cp_run(void) {
             /* filler */
         } else {
             uint32_t op = (h >> 8) & 0xFF;
-            uint32_t buf[256]; uint32_t n = cnt < 256 ? cnt : 256;
-            for (uint32_t i = 0; i < cnt; i++) { uint32_t v = ((uint32_t *)ring)[rp]; rp = (rp + 1) & mask; if (i < 256) buf[i] = v; }
-            if (!w2d_packet3(op, buf, n) && cp_logs++ < 50)
+            static uint32_t buf[0x4000];
+            for (uint32_t i = 0; i < cnt; i++) { buf[i] = ((uint32_t *)ring)[rp]; rp = (rp + 1) & mask; }
+            if (!w2d_packet3(op, buf, cnt) && cp_logs++ < 50)
                 fprintf(stderr, "[W4200] CP type3 op %02x count %u\n", op, cnt);
         }
     }
@@ -175,7 +187,7 @@ void w4200_write(uint32_t off, uint32_t v, int size) {
     if (off >= 0x20000) {
         uint32_t a = host_to_chip(off);
         uint8_t *p = a == 0xFFFFFFFF ? NULL : w42_ptr(a);
-        if (!p) { static int n; if (n++ < 20) fprintf(stderr, "[W4200] write to unmapped host offset %06x = %08x pc=%08x\n", off, v, cpu.r[15]); return; }
+        if (!p) { static int n; if (n++ < 2000000 && getenv("W42UNMAP")) fprintf(stderr, "[W4200] write to unmapped host offset %06x = %08x pc=%08x\n", off, v, cpu.r[15]); return; }
         if (size == 4) *(uint32_t *)p = v; else if (size == 2) *(uint16_t *)p = (uint16_t)v; else *p = (uint8_t)v;
         return;
     }
