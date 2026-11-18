@@ -1,47 +1,161 @@
 /* ZodiacDroid - ATI Imageon W4200 graphics controller (CS5, physical 0x16000000).
- * Reverse-engineered from how the Zodiac DAL drives it:
+ *
+ * The W4200 is a member of ATI's Imageon W100 family. Its register layout matches the
+ * W100's (as documented by the Linux w100fb driver), with a Radeon-style command
+ * processor (CP) ring and 2D engine. Layout seen from the ARM (offsets from CS5):
  *   +0x000000  host interface: 0x10 = interface version (1), 0x18 = control (bit3 reset), 0x1C = bus config
- *   +0x010000  chip registers; word 0 = PCI-style id (vendor 0x1002 = ATI) */
+ *   +0x010000  registers; 0x0000 = chip id (vendor 0x1002 = ATI)
+ *   +0x030000  internal SRAM (384KB, chip address 0x100000-0x15FFFF)
+ *   +0x800000  external SDRAM (8MB, chip address 0x800000-0xFFFFFF)
+ */
 #include "zodiac.h"
 #include "cpu.h"
 #include "io.h"
 #include "w4200.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 W4200 w42;
 
+#define REG(r) w42.reg[((r) >> 2) & 0x3FFF]
+
 void w4200_init(void) {
     memset(w42.hif, 0, sizeof w42.hif);
     memset(w42.reg, 0, sizeof w42.reg);
+    if (!w42.imem) w42.imem = calloc(1, W42_IMEM_SIZE);
+    if (!w42.emem) w42.emem = calloc(1, W42_EMEM_SIZE);
+    memset(w42.imem, 0, W42_IMEM_SIZE);
+    memset(w42.emem, 0, W42_EMEM_SIZE);
     w42.hif[0x10 >> 2] = 1;
-    w42.reg[0] = 0x57441002;     /* device 0x5744: the DAL puts 0x5644/0x5744 (W32xx family) on its newer-chip path; vendor 0x1002 = ATI */
+    /* device 0x5744: the DAL puts 0x5644/0x5744 (W32xx family) on its newer-chip path; vendor 0x1002 = ATI */
+    REG(0x0000) = 0x57441002;
+    w2d_init();
 }
 
-static uint32_t *w_reg(uint32_t off) {
-    if (off < 0x10000) return &w42.hif[(off >> 2) & 0x3FFF];
-    if (off < 0x20000) return &w42.reg[(off >> 2) & 0x3FFF];
+/* host pointer for a chip address, or NULL */
+uint8_t *w42_ptr(uint32_t a) {
+    a &= 0xFFFFFF;
+    if (a - W42_IMEM_BASE < W42_IMEM_SIZE) return w42.imem + (a - W42_IMEM_BASE);
+    if (a - W42_EMEM_BASE < W42_EMEM_SIZE) return w42.emem + (a - W42_EMEM_BASE);
     return NULL;
 }
 
-/* registers whose reads aren't simply the last value written */
-static uint32_t w4200_reg_read(uint32_t r, uint32_t v) {
+/* host (CS5 offset) -> chip address; 0xFFFFFFFF if not memory */
+static uint32_t host_to_chip(uint32_t off) {
+    off &= 0xFFFFFF;
+    if (off - 0x30000 < W42_IMEM_SIZE) return off - 0x30000 + W42_IMEM_BASE;   /* window used for the CP ring */
+    if (off - W42_IMEM_BASE < W42_IMEM_SIZE) return off;                        /* 1:1 (as on the W100) */
+    if (off >= W42_EMEM_BASE) return off;
+    return 0xFFFFFFFF;
+}
+
+uint8_t *w4200_page(uint32_t pa) {   /* pa = physical ARM address in CS5 */
+    uint32_t a = host_to_chip(pa & 0xFFF000);
+    return a == 0xFFFFFFFF ? NULL : w42_ptr(a);
+}
+
+/* ---------------------------------------------------------------- command processor */
+
+static int cp_logs;
+
+static void cp_run(void) {
+    uint32_t cntl = REG(0x210);
+    uint32_t size = 8u << (cntl & 0x3F);          /* bytes */
+    uint32_t base = REG(0x214) & 0x00FFFFFC;
+    uint32_t mask = size / 4 - 1;
+    uint8_t *ring = w42_ptr(base);
+    if (!ring || size > 0x100000) return;
+    uint32_t rp = REG(0x21C) & mask, wp = REG(0x220) & mask;
+    if (zod.log_2d > 1) {
+        fprintf(stderr, "[CP] run rp=%x wp=%x base=%x size=%x:", rp, wp, base, size);
+        for (uint32_t i = rp; i != wp && i != ((rp + 64) & mask); i = (i + 1) & mask) fprintf(stderr, " %08x", ((uint32_t *)ring)[i]);
+        fprintf(stderr, "\n");
+    }
+    int guard = 0;
+    while (rp != wp && guard++ < 1000000) {
+        uint32_t h = ((uint32_t *)ring)[rp];
+        rp = (rp + 1) & mask;
+        uint32_t type = h >> 30, cnt = ((h >> 16) & 0x3FFF) + 1;
+        if (type == 0) {
+            uint32_t reg = (h & 0x1FFF) << 2;
+            for (uint32_t i = 0; i < cnt; i++) {
+                uint32_t v = ((uint32_t *)ring)[rp]; rp = (rp + 1) & mask;
+                w4200_reg_write(reg, v);
+                if (!(h & 0x8000)) reg += 4;
+            }
+        } else if (type == 1) {
+            uint32_t r0 = (h & 0x7FF) << 2, r1 = ((h >> 11) & 0x7FF) << 2;
+            w4200_reg_write(r0, ((uint32_t *)ring)[rp]); rp = (rp + 1) & mask;
+            w4200_reg_write(r1, ((uint32_t *)ring)[rp]); rp = (rp + 1) & mask;
+        } else if (type == 2) {
+            /* filler */
+        } else {
+            uint32_t op = (h >> 8) & 0xFF;
+            uint32_t buf[256]; uint32_t n = cnt < 256 ? cnt : 256;
+            for (uint32_t i = 0; i < cnt; i++) { uint32_t v = ((uint32_t *)ring)[rp]; rp = (rp + 1) & mask; if (i < 256) buf[i] = v; }
+            if (!w2d_packet3(op, buf, n) && cp_logs++ < 50)
+                fprintf(stderr, "[W4200] CP type3 op %02x count %u\n", op, cnt);
+        }
+    }
+    REG(0x21C) = rp;
+}
+
+/* ---------------------------------------------------------------- registers */
+
+static uint32_t reg_read(uint32_t r) {
+    uint32_t v = REG(r);
     switch (r) {
-    case 0x01B8: return (v & ~0x10u) | 1;     /* clock status: PLL locked, not busy */
-    case 0x04D8: return v & ~0x3u;            /* display update control: latch bits clear at vsync */
-    case 0x054C: {                             /* display status: bit10 = vertical blank */
+    case 0x0140: return 0;                         /* RBBM_STATUS: engine idle, FIFO empty */
+    case 0x01B8: return (v & ~0x10u) | 1;          /* clock status: PLL locked, not busy */
+    case 0x04D8: return v & ~0x3u;                 /* DISP_DB_BUF_CNTL: update latches at vsync */
+    case 0x054C: {                                 /* display status: bit10 = vertical blank */
         uint64_t frame = zod.cpu_hz / 60, ph = cpu_now() % frame;
         return ph >= frame - frame / 12 ? (v | 0x400) : (v & ~0x400u);
     }
     }
+    if (r >= 0x1000 && r < 0x2000) return w2d_read(r, v);
     return v;
 }
 
+void w4200_reg_write(uint32_t r, uint32_t v) {
+    r &= 0xFFFC;
+    if (r < 8) return;                             /* chip id / revision are read-only */
+    REG(r) = v;
+    switch (r) {
+    case 0x0214: REG(0x21C) = 0; break;            /* CP_RB_BASE: (re)initialising the ring resets the read pointer */
+    case 0x0220: cp_run(); break;                  /* CP_RB_WPTR */
+    }
+    if (r >= 0x1000 && r < 0x2000) w2d_write(r, v);
+}
+
+/* ---------------------------------------------------------------- peripheral blocks at host 0x200000 */
+
+#define AUX(o) w42.aux[(((o) - 0x200000) >> 2) & 0x3FFF]
+
+static uint32_t aux_read(uint32_t off) {
+    off |= 0x200000;
+    return AUX(off);
+}
+
+static void aux_write(uint32_t off, uint32_t v) {
+    off |= 0x200000;
+    AUX(off) = v;
+}
+
+/* ---------------------------------------------------------------- host access */
+
 uint32_t w4200_read(uint32_t off, int size) {
-    uint32_t *r = w_reg(off), v;
-    if (!r) { io_log("R", 0x16000000 + off, 0, size); return 0; }
-    v = *r;
-    if (off >= 0x10000 && off < 0x20000) v = w4200_reg_read(off & 0xFFFC, v);
+    uint32_t v;
+    if (off < 0x10000) v = w42.hif[(off >> 2) & 0x3FFF];
+    else if (off < 0x20000) v = reg_read(off & 0xFFFC);
+    else if (off - 0x200000 < 0x10000) v = aux_read(off & 0xFFFC);
+    else {
+        uint32_t a = host_to_chip(off);
+        uint8_t *p = a == 0xFFFFFFFF ? NULL : w42_ptr(a);
+        if (!p) { io_log("R", 0x16000000 + off, 0, size); return 0; }
+        return size == 4 ? *(uint32_t *)p : size == 2 ? *(uint16_t *)p : *p;
+    }
     if (size == 2) v = (v >> ((off & 2) * 8)) & 0xFFFF;
     else if (size == 1) v = (v >> ((off & 3) * 8)) & 0xFF;
     io_log("R", 0x16000000 + off, v, size);
@@ -49,11 +163,55 @@ uint32_t w4200_read(uint32_t off, int size) {
 }
 
 void w4200_write(uint32_t off, uint32_t v, int size) {
-    uint32_t *r = w_reg(off);
     io_log("W", 0x16000000 + off, v, size);
-    if (!r) return;
-    if (off >= 0x10000 && (off & 0xFFFF) < 8) return;   /* id is read-only */
-    if (size == 4) *r = v;
-    else if (size == 2) { int s = (off & 2) * 8; *r = (*r & ~(0xFFFFu << s)) | ((v & 0xFFFF) << s); }
-    else { int s = (off & 3) * 8; *r = (*r & ~(0xFFu << s)) | ((v & 0xFF) << s); }
+    if (off - 0x200000 < 0x10000) {
+        uint32_t *r = &w42.aux[((off - 0x200000) >> 2) & 0x3FFF], nv = *r;
+        if (size == 4) nv = v;
+        else if (size == 2) { int s = (off & 2) * 8; nv = (nv & ~(0xFFFFu << s)) | ((v & 0xFFFF) << s); }
+        else { int s = (off & 3) * 8; nv = (nv & ~(0xFFu << s)) | ((v & 0xFF) << s); }
+        aux_write(off & 0xFFFFFC, nv);
+        return;
+    }
+    if (off >= 0x20000) {
+        uint32_t a = host_to_chip(off);
+        uint8_t *p = a == 0xFFFFFFFF ? NULL : w42_ptr(a);
+        if (!p) { static int n; if (n++ < 20) fprintf(stderr, "[W4200] write to unmapped host offset %06x = %08x pc=%08x\n", off, v, cpu.r[15]); return; }
+        if (size == 4) *(uint32_t *)p = v; else if (size == 2) *(uint16_t *)p = (uint16_t)v; else *p = (uint8_t)v;
+        return;
+    }
+    uint32_t *r = off < 0x10000 ? &w42.hif[(off >> 2) & 0x3FFF] : &REG(off & 0xFFFC);
+    uint32_t nv = *r;
+    if (size == 4) nv = v;
+    else if (size == 2) { int s = (off & 2) * 8; nv = (nv & ~(0xFFFFu << s)) | ((v & 0xFFFF) << s); }
+    else { int s = (off & 3) * 8; nv = (nv & ~(0xFFu << s)) | ((v & 0xFF) << s); }
+    if (off < 0x10000) *r = nv;
+    else w4200_reg_write(off & 0xFFFC, nv);
+}
+
+/* ---------------------------------------------------------------- display */
+
+/* Render the LCD into zod.fb as the user sees it (landscape 480x320).
+ * The panel is 320x480 portrait. GRAPHIC_CTRL.portrait_mode selects how the controller walks
+ * memory: mode 0 scans a 320-wide portrait surface directly; modes 1/2 scan a 480-wide
+ * landscape surface rotated (GRAPHIC_OFFSET then points at the bottom-left / top-right). */
+void w4200_scanout(void) {
+    uint32_t ctrl = REG(0x414), off = REG(0x418) & 0xFFFFFF, pitch = REG(0x41C) & 0x3FFF;
+    int mode = (ctrl >> 3) & 3;
+    if (!pitch || !(ctrl & 0x800)) { memset(zod.fb, 0, sizeof zod.fb); zod.frame_ready = 1; return; }
+    if (mode == 0) {
+        /* portrait surface: panel row y (0..479) runs right-to-left across the landscape screen */
+        for (int y = 0; y < 480; y++) {
+            const uint16_t *src = (const uint16_t *)w42_ptr(off + (uint32_t)y * pitch);
+            if (!src) continue;
+            for (int x = 0; x < 320; x++) zod.fb[x * SCREEN_W + (479 - y)] = src[x];
+        }
+    } else {
+        uint32_t base = mode == 2 ? off - (pitch - 4) : off - 319 * pitch;
+        for (int y = 0; y < 320; y++) {
+            const uint16_t *src = (const uint16_t *)w42_ptr(base + (uint32_t)y * pitch);
+            if (!src) { memset(&zod.fb[y * SCREEN_W], 0, SCREEN_W * 2); continue; }
+            memcpy(&zod.fb[y * SCREEN_W], src, SCREEN_W * 2);
+        }
+    }
+    zod.frame_ready = 1;
 }

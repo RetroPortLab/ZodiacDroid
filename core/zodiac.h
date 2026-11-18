@@ -27,7 +27,7 @@ typedef struct {
     int log_io;           /* print I/O accesses */
     int log_limit;
     uint32_t log_filter;  /* only log this 4K page (0 = all) */
-    int log_uart, log_i2c;
+    int log_uart, log_i2c, log_2d;
     int model;            /* 1 or 2 */
     uint16_t fb[SCREEN_W * SCREEN_H];   /* last frame, RGB565 */
     int frame_ready;
@@ -39,6 +39,10 @@ extern Zodiac zod;
 int  zod_load_rom(const uint8_t *data, size_t len, char *err, size_t errlen);
 void zod_reset(void);
 void zod_run_frame(void);            /* one 1/60s slice */
+
+/* patch.c */
+void patches_install(void (*debug_hook)(uint32_t pc));
+void patch_arm(uint32_t va);
 
 /* peripherals */
 void io_init(void);

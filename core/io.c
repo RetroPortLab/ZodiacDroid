@@ -23,6 +23,7 @@ static const char *periph_name(uint32_t pa) {
 
 void io_log(const char *what, uint32_t pa, uint32_t v, int size) {
     if (!zod.log_io || logs >= zod.log_limit) return;
+    if (pa == 0x00202010 && zod.log_filter != 0x00202000) return;   /* free-running counter polls drown everything */
     if (zod.log_filter) { uint32_t m = ~((zod.log_filter & -zod.log_filter) - 1); if ((pa & m) != zod.log_filter) return; }
     logs++;
     fprintf(stderr, "%-5s %s%d %08x %s %08x  pc=%08x lr=%08x\n", periph_name(pa), what, size * 8, pa,
@@ -53,7 +54,7 @@ static void aitc_update(void) {
     IOREG(AITC + 0x4C) = (uint32_t)(src_level | src_force);
     IOREG(AITC + 0x58) = (uint32_t)(np >> 32); IOREG(AITC + 0x5C) = (uint32_t)np;
     IOREG(AITC + 0x60) = (uint32_t)(fp >> 32); IOREG(AITC + 0x64) = (uint32_t)fp;
-    int nidis = (IOREG(AITC) >> 20) & 1, fidis = (IOREG(AITC) >> 19) & 1;
+    int nidis = (IOREG(AITC) >> 22) & 1, fidis = (IOREG(AITC) >> 21) & 1;   /* INTCNTL.NIDIS / FIDIS */
     cpu_set_irq(best >= 0 && !nidis);
     cpu_set_fiq(fbest >= 0 && !fidis);
 }

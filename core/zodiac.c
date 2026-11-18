@@ -1,6 +1,7 @@
 /* ZodiacDroid - memory map, ROM loading, frame loop */
 #include "zodiac.h"
 #include "cpu.h"
+#include "w4200.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,6 +17,7 @@ uint8_t *bus_page(uint32_t pa, int write) {
         if (pa - FLASH_BASE < FLASH_SIZE) return zod.flash + ((pa - FLASH_BASE) & ~0xFFFu);
         if (pa < 0x00100000u) return zod.flash + (pa & ~0xFFFu);   /* boot alias of CS0 */
     }
+    if ((pa >> 24) == 0x16) return w4200_page(pa);
     if (pa - ESRAM_BASE < ESRAM_SIZE) return zod.esram + ((pa - ESRAM_BASE) & ~0xFFFu);
     return NULL;
 }
@@ -106,6 +108,7 @@ void zod_reset(void) {
     zod.cpu_hz = 200000000;
     io_init();
     cpu_reset();
+    patches_install(NULL);
 }
 
 void zod_run_frame(void) {
@@ -118,4 +121,5 @@ void zod_run_frame(void) {
         done += c;
         if (cpu.dbg_hit) break;
     }
+    w4200_scanout();
 }
