@@ -44,7 +44,7 @@ static volatile int stick_x, stick_y;
 static volatile uint32_t buttons;
 
 /* requests handled on the emulator thread: 0 none, else an action code; result in req_result */
-enum { REQ_NONE, REQ_SAVE, REQ_LOAD, REQ_SOFT_RESET, REQ_HARD_RESET, REQ_AUTOSAVE };
+enum { REQ_NONE, REQ_SAVE, REQ_LOAD, REQ_SOFT_RESET, REQ_HARD_RESET, REQ_AUTOSAVE, REQ_REMOUNT };
 static pthread_mutex_t req_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t req_cond = PTHREAD_COND_INITIALIZER;
 static int req, req_done, req_result;
@@ -113,6 +113,12 @@ static void handle_request(void) {
     case REQ_SOFT_RESET: zod_soft_reset(); break;
     case REQ_HARD_RESET: zod_reset(); remove(autosave_path); break;
     case REQ_AUTOSAVE: res = autosave_path[0] ? save_to(autosave_path) : 0; break;
+    case REQ_REMOUNT:   /* take the card out; it goes back in after a moment so Palm OS sees a new card */
+        if (card_fd < 0) { res = 0; break; }
+        fsync(card_fd);
+        sd_attach(-1, 0);
+        reinsert_in = 90;
+        break;
     }
     LOGI("request %d -> %d", r, res);
     pthread_mutex_lock(&req_lock);
@@ -425,6 +431,7 @@ JNIEXPORT jboolean JNICALL FN(loadState)(JNIEnv *env, jclass c, jstring path) {
     return request(REQ_LOAD, p) ? JNI_TRUE : JNI_FALSE;
 }
 JNIEXPORT jboolean JNICALL FN(autosave)(JNIEnv *env, jclass c) { (void)env; (void)c; return request(REQ_AUTOSAVE, NULL) ? JNI_TRUE : JNI_FALSE; }
+JNIEXPORT jboolean JNICALL FN(remountCard)(JNIEnv *env, jclass c) { (void)env; (void)c; return request(REQ_REMOUNT, NULL) ? JNI_TRUE : JNI_FALSE; }
 JNIEXPORT void JNICALL FN(softReset)(JNIEnv *env, jclass c) { (void)env; (void)c; request(REQ_SOFT_RESET, NULL); }
 JNIEXPORT void JNICALL FN(hardReset)(JNIEnv *env, jclass c) { (void)env; (void)c; request(REQ_HARD_RESET, NULL); }
 

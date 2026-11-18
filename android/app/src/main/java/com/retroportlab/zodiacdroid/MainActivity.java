@@ -1004,6 +1004,10 @@ public class MainActivity extends Activity {
         });
         panel.addView(filter);
         panel.addView(row("Press Home", "Back to the Zodiac launcher", null, v -> { closePauseMenu(); tapButton(NativeLib.HOME); }));
+        panel.addView(row("Remount SD card", "Takes the card out and puts it back, so Palm OS reads it again", null, v -> {
+            if (NativeLib.remountCard()) { toast("SD card removed, going back in…"); closePauseMenu(); }
+            else toast("There's no SD card to remount");
+        }));
         panel.addView(row("Reset", "Like the reset button: restarts Palm OS, keeps your apps and data", null,
                 v -> { NativeLib.softReset(); closePauseMenu(); }));
         panel.addView(row("Quit to menu", "The handheld's memory is saved", null, v -> showHome()));

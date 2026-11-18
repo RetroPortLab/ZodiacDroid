@@ -29,6 +29,7 @@ final class NativeLib {
     static native boolean saveState(String path);
     static native boolean loadState(String path);
     static native boolean autosave();
+    static native boolean remountCard();     // eject the SD card, reinsert it after ~1.5 s
     static native void softReset();
     static native void hardReset();
     static native short[] screenshot();
