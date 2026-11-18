@@ -351,13 +351,14 @@ public class MainActivity extends Activity {
             setRowValue(jit, on ? "Recompiler" : "Interpreter");
         });
         list.addView(jit);
-        LinearLayout clock = row("CPU clock", "The Zodiac runs at 200 MHz. Lower clocks can make 3D games stall, "
-                + "so only change this to experiment", clockName(clockSetting()), null);
+        LinearLayout clock = row("CPU clock", "The Zodiac runs at 200 MHz. Higher clocks make the game's menus and "
+                + "loading snappier if your device can keep up; lower clocks can stall 3D games", clockName(clockSetting()), null);
         clock.setOnClickListener(v -> {
             int i = 0;
             for (int k = 0; k < CLOCKS.length; k++) if (CLOCKS[k] == clockSetting()) i = k;
             int c = CLOCKS[(i + 1) % CLOCKS.length];
             prefs.edit().putInt("clock2", c).apply();
+            NativeLib.setClock(c);
             setRowValue(clock, clockName(c));
         });
         list.addView(clock);
@@ -384,7 +385,7 @@ public class MainActivity extends Activity {
         rom.requestFocus();
     }
 
-    private static final int[] CLOCKS = {200, 166, 133};
+    private static final int[] CLOCKS = {200, 300, 400, 166, 133};
     private static String clockName(int mhz) { return mhz == 0 ? "Auto" : mhz + " MHz"; }
     private int clockSetting() { int c = prefs.getInt("clock2", 200); return c == 0 ? 200 : c; }
 
