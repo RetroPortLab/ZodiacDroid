@@ -46,6 +46,24 @@ static void sig_accept_all(void) { cpu.r[0] = 1; cpu.r[15] = cpu.r[14] & ~1u; if
  * Report every caller as trusted. Returns nonzero for "ok". */
 static void caller_trusted(void) { cpu.r[0] = 1; cpu.r[15] = cpu.r[14] & ~1u; if (!(cpu.r[14] & 1)) cpu.cpsr &= ~0x20u; }
 
+/* After every reset (reset button or a Palm error) the shell (UIAppShell main) launches the
+ * Welcome / "Zodiac Setup" app again, because the setup check it makes is not satisfied by
+ * our environment. Let it run once per machine (a fresh install), then skip it. The flag is
+ * part of the save state; states from before it existed count as already set up. */
+int shell_seen;
+static void skip_setup_app(void) { if (shell_seen) cpu.r[6] = 0; else shell_seen = 1; }
+
+/* Startup of the shell: after the Welcome app it picks Preferences as the next application,
+ * and Preferences goes straight to the pen Calibration panel because the saved calibration
+ * (resource 'psys' #3 in the Saved Preferences database) is not found again after a reset.
+ * Once the device has been set up, start the Launcher in its place. r0 = shell globals. */
+#define LAUNCHER_DB    0x20262BC0u
+#define PREFERENCES_DB 0x203333FCu
+static void launcher_not_setup(void) {
+    uint32_t v;
+    if (shell_seen && cpu_vread32(cpu.r[0] + 0x50, &v) && v == PREFERENCES_DB) cpu_vwrite32(cpu.r[0] + 0x50, LAUNCHER_DB);
+}
+
 /* Battery level: the DAL samples the battery through a gauge we don't emulate, then
  * scales it by factory calibration data. Report a full battery (the result is clamped
  * to 50..950 by the DAL itself). */
@@ -54,7 +72,9 @@ static void battery_level(void) { cpu.r[0] = 900; cpu.r[15] = cpu.r[14] & ~1u; i
 static const Patch patches[] = {
     { 0x200A4524, 0xE19A0000, sig_ok, "database signature check" },
     { 0x200A3FA8, 0xE92D4FFF, sig_accept_all, "application signature check (allow unsigned software)" },
+    { 0x2033259C, 0xE3560000, skip_setup_app, "run the Welcome setup app only once" },
     { 0x200A5014, 0xE92D41F0, caller_trusted, "caller signature check (allow unsigned software)" },
+    { 0x2033283C, 0xE5900050, launcher_not_setup, "start the Launcher instead of setup after a reset" },
     { 0x20084912, 0x2800491D, hal_delay, "HALDelay" },
     { 0x204B2BEC, 0xA210B580, pins_stub, "Pen Input Manager stub (UI)" },
     { 0x20055E28, 0xA2A6B580, pins_stub, "Pen Input Manager stub (system)" },

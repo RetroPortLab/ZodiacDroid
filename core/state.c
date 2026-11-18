@@ -9,7 +9,8 @@
 #include <zlib.h>
 
 #define STATE_MAGIC   0x53444F5Au   /* "ZODS" */
-#define STATE_VERSION 4
+#define STATE_VERSION 5
+extern int shell_seen;
 
 void st_bytes(StateIO *s, void *p, size_t n) {
     if (s->err) return;
@@ -59,6 +60,7 @@ static void machine(StateIO *s, uint32_t version) {
     ext_state(s);
     w4200_state(s);
     w2d_state(s);
+    if (version >= 5) ST(s, shell_seen); else if (s->loading) shell_seen = 1;
     if (version >= 2) sd_state(s, version);
     else if (s->loading) zod.io[0x09004 >> 2] = 0;   /* v1 kept DMA DISR as a plain register */
 }

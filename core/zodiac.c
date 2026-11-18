@@ -101,7 +101,9 @@ check:
     return 1;
 }
 
+extern int shell_seen;
 void zod_reset(void) {
+    shell_seen = 0;
     memset(zod.sdram, 0, SDRAM_SIZE);
     memset(zod.esram, 0, ESRAM_SIZE);
     zod.cycles = 0;

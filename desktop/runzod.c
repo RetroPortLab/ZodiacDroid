@@ -126,6 +126,7 @@ int main(int argc, char **argv) {
     int iofrom = getenv("IOFROM") ? atoi(getenv("IOFROM")) : -1;
     if (iofrom > 0) zod.log_io = 0;
     for (int f = 0; f < frames && !cpu.dbg_hit; f++) {
+        { const char *sr = getenv("SOFTRESET"); if (sr && f == atoi(sr)) { zod_soft_reset(); if (nhooks) { patches_install(hook); for (int h = 0; h < nhooks; h++) patch_arm(hooks[h]); } } }
         if (f == iofrom) { zod.log_io = !getenv("LOG2D"); if (getenv("LOG2D")) zod.log_2d = atoi(getenv("LOG2D")); }
         if (getenv("PROF") && f == atoi(getenv("PROF"))) zod.prof = prof;
         /* REMOUNT=frame ejects the card and puts it back 90 frames later (rescan for new files) */
