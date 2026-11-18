@@ -116,6 +116,7 @@ void zod_run_frame(void) {
     int total = zod.cpu_hz / 60;
     for (int done = 0; done < total; ) {
         int c = cpu_run(io_next_event(slice));
+        if (zod.prof) zod.prof(cpu.r[15]);
         zod.cycles += c;
         io_tick(c);
         done += c;

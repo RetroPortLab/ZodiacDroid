@@ -1,5 +1,6 @@
 /* ZodiacDroid headless test runner:
  *   runzod rom|update.prc [frames] [--io N] [--trace N] [--shot out.ppm] */
+#include "../core/io.h"
 #include "../core/zodiac.h"
 #include "../core/cpu.h"
 #include "../core/w4200.h"
@@ -35,6 +36,20 @@ static void hook(uint32_t pc) {
             }
         }
             fprintf(stderr, "HOOK %08x r0=%08x r1=%08x r2=%08x r3=%08x lr=%08x  \"%s\" \"%s\" \"%s\"\n", pc, cpu.r[0], cpu.r[1], cpu.r[2], cpu.r[3], cpu.r[14], s0, s1, s2);
+    }
+}
+static uint32_t prof_pc[1 << 16], prof_n[1 << 16];
+static void prof(uint32_t pc) {
+    uint32_t h = (pc >> 2) & 0xFFFF;
+    if (prof_pc[h] != pc) { if (prof_n[h]) return; prof_pc[h] = pc; }
+    prof_n[h]++;
+}
+static void prof_dump(void) {
+    for (int k = 0; k < 40; k++) {
+        uint32_t best = 0, bi = 0;
+        for (int i = 0; i < 1 << 16; i++) if (prof_n[i] > best) { best = prof_n[i]; bi = i; }
+        if (!best) break;
+        fprintf(stderr, "PROF %08x %u\n", prof_pc[bi], best); prof_n[bi] = 0;
     }
 }
 static void shot(const char *path) {
@@ -84,7 +99,29 @@ int main(int argc, char **argv) {
     /* TAPS="frame:x,y;frame:x,y" taps the screen (held for 6 frames) */
     int tapf[32], tapx[32], tapy[32], ntap = 0;
     if (getenv("TAPS")) { const char *p = getenv("TAPS"); while (ntap < 32 && sscanf(p, "%d:%d,%d", &tapf[ntap], &tapx[ntap], &tapy[ntap]) == 3) { ntap++; p = strchr(p, ';'); if (!p) break; p++; } }
+    int iofrom = getenv("IOFROM") ? atoi(getenv("IOFROM")) : -1;
+    if (iofrom > 0) zod.log_io = 0;
     for (int f = 0; f < frames && !cpu.dbg_hit; f++) {
+        if (f == iofrom) zod.log_io = 1;
+        if (getenv("PROF") && f == atoi(getenv("PROF"))) zod.prof = prof;
+        /* STICK="frame:x,y:len;..." deflects the analog controller (-32767..32767) */
+        if (getenv("STICK")) {
+            const char *p = getenv("STICK"); int sf, sx, sy, sl;
+            while (sscanf(p, "%d:%d,%d:%d", &sf, &sx, &sy, &sl) == 4) {
+                if (f == sf) zod_stick(sx, sy);
+                if (f == sf + sl) zod_stick(0, 0);
+                p = strchr(p, ';'); if (!p) break; p++;
+            }
+        }
+        /* PINS="frame:port.pin:len;..." holds a GPIO input low (button press) */
+        if (getenv("PINS")) {
+            const char *p = getenv("PINS"); int pf, pp, pn, pl;
+            while (sscanf(p, "%d:%d.%d:%d", &pf, &pp, &pn, &pl) == 4) {
+                if (f == pf) gpio_set_input(pp, 1u << pn, 0);
+                if (f == pf + pl) gpio_set_input(pp, 1u << pn, 1);
+                p = strchr(p, ';'); if (!p) break; p++;
+            }
+        }
         for (int t = 0; t < ntap; t++) {
             if (f == tapf[t]) zod_touch(tapx[t], tapy[t], 1);
             if (f == tapf[t] + (getenv("TAPLEN") ? atoi(getenv("TAPLEN")) : 6)) zod_touch(tapx[t], tapy[t], 0);
@@ -112,6 +149,7 @@ int main(int argc, char **argv) {
     if (getenv("W42REGS")) { uint32_t a, b; sscanf(getenv("W42REGS"), "%x-%x", &a, &b);
         for (uint32_t r = a; r < b; r += 4) fprintf(stderr, "%04x: %08x%s", r, w42.reg[r >> 2], ((r - a) & 0xC) == 0xC ? "\n" : "  "); }
     if (getenv("W42MEM")) { FILE *f = fopen(getenv("W42MEM"), "wb"); fwrite(w42.imem, 1, W42_IMEM_SIZE, f); fwrite(w42.emem, 1, W42_EMEM_SIZE, f); fclose(f); }
+    if (zod.prof) prof_dump();
     if (getenv("RAMDUMP")) { FILE *f = fopen(getenv("RAMDUMP"), "wb"); fwrite(zod.sdram, 1, SDRAM_SIZE, f); fclose(f); }
     if (shotp) shot(shotp);
     return 0;

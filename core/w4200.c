@@ -115,9 +115,35 @@ static void cp_run(void) {
 
 /* ---------------------------------------------------------------- registers */
 
+/* Analog controller: the W4200's two-channel ADC samples the stick. A conversion is started
+ * by setting bit 10 of 0xD0C; 0xD10 bits 20..24 give the FIFO depth and 0xD14 pops samples
+ * tagged with the channel in bits 24..29, 10-bit values, centre 512: channel 1 is the
+ * horizontal axis (inverted), channel 2 the vertical. */
+static int stick_x, stick_y;          /* -32767..32767, right/down positive */
+static unsigned adc_seq;
+
+void zod_stick(int x, int y) {
+    if (x < -32767) x = -32767;
+    if (x > 32767) x = 32767;
+    if (y < -32767) y = -32767;
+    if (y > 32767) y = 32767;
+    stick_x = x; stick_y = y;
+}
+
+static uint32_t adc_pop(void) {
+    int ch1 = 512 - stick_x / 64, ch2 = 512 + stick_y / 64;
+    if (ch1 > 1023) ch1 = 1023;
+    if (ch2 > 1023) ch2 = 1023;
+    if (ch1 < 0) ch1 = 0;
+    if (ch2 < 0) ch2 = 0;
+    return (adc_seq++ & 1) ? (2u << 24) | (uint32_t)ch2 : (1u << 24) | (uint32_t)ch1;
+}
+
 static uint32_t reg_read(uint32_t r) {
     uint32_t v = REG(r);
     switch (r) {
+    case 0x0D10: return (v & ~(0x1Fu << 20)) | (2u << 20);
+    case 0x0D14: return adc_pop();
     case 0x0140: return 0;                         /* RBBM_STATUS: engine idle, FIFO empty */
     case 0x01B8: return (v & ~0x10u) | 1;          /* clock status: PLL locked, not busy */
     case 0x04D8: return v & ~0x3u;                 /* DISP_DB_BUF_CNTL: update latches at vsync */
@@ -137,6 +163,7 @@ void w4200_reg_write(uint32_t r, uint32_t v) {
     switch (r) {
     case 0x0214: REG(0x21C) = 0; break;            /* CP_RB_BASE: (re)initialising the ring resets the read pointer */
     case 0x0220: cp_run(); break;                  /* CP_RB_WPTR */
+    case 0x0D0C: if (v & 0x400) adc_seq = 0; break; /* ADC conversion start */
     }
     if (r >= 0x1000 && r < 0x2000) w2d_write(r, v);
 }
