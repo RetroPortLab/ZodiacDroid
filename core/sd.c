@@ -59,10 +59,11 @@ int sd_log;
 /* ---------------------------------------------------------------- card image */
 
 void sd_attach(int fd, uint64_t size) {
+    int was = sd.inserted;
     card_fd = fd;
     card_size = size;
     sd.inserted = fd >= 0;
-    sd.state = 0;
+    if (was != sd.inserted) sd.state = 0;   /* a new card starts idle; the same card keeps its state */
     gpio_set_input(1, 1u << 20, sd.inserted ? 0 : 1);   /* card detect, active low */
 }
 

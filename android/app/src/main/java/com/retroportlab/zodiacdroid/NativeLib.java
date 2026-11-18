@@ -7,7 +7,9 @@ final class NativeLib {
     static { System.loadLibrary("zodiacdroid"); }
 
     static native boolean checkRom(byte[] rom);
-    static native boolean boot(byte[] rom, String autosavePath);
+    static native boolean boot(byte[] rom, String autosavePath, String cardPath, boolean cardChanged);
+    static native boolean cardPut(String cardPath, String pathOnCard, byte[] data);
+    static native String cardList(String cardPath, String folder);
     static native String lastError();
     static native void setSurface(Surface s);
     static native void start();

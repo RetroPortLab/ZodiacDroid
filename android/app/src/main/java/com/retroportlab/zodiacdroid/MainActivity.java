@@ -50,7 +50,7 @@ public class MainActivity extends Activity {
     private static final int BG = 0xFF0A1022, PANEL = 0xFF142042, PANEL_FOCUS = 0xFF213468;
     private static final int ACCENT = 0xFF5FB4FF, GOLD = 0xFFFFC247, TEXT = 0xFFF2F4FA, SUBTEXT = 0xFF97A3C2;
 
-    private static final int PICK_ROM = 1;
+    private static final int PICK_ROM = 1, PICK_INSTALL = 2;
     private static final int SCREEN_HOME = 0, SCREEN_SETTINGS = 1, SCREEN_GAME = 2, SCREEN_UPDATE = 3,
             SCREEN_STATES = 4, SCREEN_CONTROLS = 5;
     private static final int SLOTS = 6;
@@ -247,6 +247,7 @@ public class MainActivity extends Activity {
     private File romFile() { return new File(getFilesDir(), "zodiac.rom"); }
     private boolean haveRom() { return romFile().length() > 0; }
     private File autosaveFile() { return new File(getFilesDir(), "memory.zst"); }
+    private File cardFile() { return new File(getFilesDir(), "sdcard.img"); }
     private File slotFile(int n) { return new File(getFilesDir(), "slot" + n + ".zst"); }
     private File slotThumb(int n) { return new File(getFilesDir(), "slot" + n + ".png"); }
 
@@ -282,6 +283,11 @@ public class MainActivity extends Activity {
                 "▶", v -> powerOn(null));
         list.addView(power);
         list.addView(row("Save states", "Snapshots of the whole handheld you can go back to", null, v -> showStates(false)));
+
+        list.addView(sectionTitle("SD card"));
+        list.addView(row("Install games and apps", "Tapwave store .zip files, or .prc / .pdb files; they go on the emulated SD card",
+                null, v -> pickInstall()));
+        list.addView(row("What's on the card", cardSummary(), null, v -> showCard()));
 
         list.addView(sectionTitle("Controls"));
         TextView help = text("Left stick or D-pad: analog controller   ·   A B X Y: action buttons   ·   L1 R1: triggers\n"
@@ -642,7 +648,15 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
-        if (res != RESULT_OK || data == null || data.getData() == null) return;
+        if (res != RESULT_OK || data == null) return;
+        if (req == PICK_INSTALL) {
+            java.util.List<Uri> uris = new java.util.ArrayList<>();
+            if (data.getClipData() != null) for (int i = 0; i < data.getClipData().getItemCount(); i++) uris.add(data.getClipData().getItemAt(i).getUri());
+            else if (data.getData() != null) uris.add(data.getData());
+            installFiles(uris);
+            return;
+        }
+        if (data.getData() == null) return;
         Uri u = data.getData();
         if (req == PICK_ROM) {
             toast("Reading ROM…");
@@ -713,6 +727,151 @@ public class MainActivity extends Activity {
         } catch (Exception e) { return null; }
     }
 
+    // ------------------------------------------------------------- SD card --
+    private void pickInstall() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("*/*");
+        i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        try { startActivityForResult(i, PICK_INSTALL); }
+        catch (Exception e) { toast("No file picker available"); }
+    }
+
+    private String cardSummary() {
+        if (!cardFile().exists()) return "Empty";
+        String l = NativeLib.cardList(cardFile().getAbsolutePath(), "PALM/Launcher");
+        int apps = l.isEmpty() ? 0 : l.split("\n").length;
+        return apps + (apps == 1 ? " app" : " apps") + " in /PALM/Launcher";
+    }
+
+    /** One file to put on the card. */
+    static final class CardFile { final String path; final byte[] data; CardFile(String p, byte[] d) { path = p; data = d; } }
+
+    private static boolean isPalmDb(String name) {
+        String l = name.toLowerCase(Locale.US);
+        return l.endsWith(".prc") || l.endsWith(".pdb") || l.endsWith(".pqa");
+    }
+
+    private static String baseName(String p) {
+        p = p.replace('\\', '/');
+        return p.substring(p.lastIndexOf('/') + 1);
+    }
+
+    /** What to copy for one picked file: Palm databases go to /PALM/Launcher; a Tapwave store
+     *  .zip is unpacked following its installer .ini (RAM files to /PALM/Launcher, CARD files
+     *  to the folder named there). */
+    private java.util.List<CardFile> plan(String name, byte[] data) throws Exception {
+        java.util.List<CardFile> out = new java.util.ArrayList<>();
+        boolean zip = data.length > 4 && data[0] == 'P' && data[1] == 'K' && data[2] == 3 && data[3] == 4;
+        if (!zip) {
+            out.add(new CardFile(isPalmDb(name) ? "/PALM/Launcher/" + name : "/" + name, data));
+            return out;
+        }
+        java.util.Map<String, byte[]> entries = new java.util.LinkedHashMap<>();
+        try (ZipInputStream z = new ZipInputStream(new java.io.ByteArrayInputStream(data))) {
+            for (ZipEntry e; (e = z.getNextEntry()) != null; ) {
+                if (e.isDirectory()) continue;
+                ByteArrayOutputStream bo = new ByteArrayOutputStream();
+                byte[] buf = new byte[65536];
+                for (int n; (n = z.read(buf)) > 0; ) bo.write(buf, 0, n);
+                entries.put(e.getName().replace('\\', '/'), bo.toByteArray());
+            }
+        }
+        for (java.util.Map.Entry<String, byte[]> e : entries.entrySet()) {
+            if (!e.getKey().toLowerCase(Locale.US).endsWith(".ini")) continue;
+            String ini = new String(e.getValue(), "ISO-8859-1");
+            if (!ini.contains("PalmFile")) continue;
+            String dir = e.getKey().contains("/") ? e.getKey().substring(0, e.getKey().lastIndexOf('/') + 1) : "";
+            java.util.Map<String, java.util.Map<String, String>> sec = new java.util.HashMap<>();
+            java.util.Map<String, String> cur = null;
+            for (String line : ini.split("\r?\n")) {
+                String t = line.trim();
+                if (t.startsWith(";") || t.isEmpty()) continue;
+                if (t.startsWith("[") && t.endsWith("]")) { cur = new java.util.HashMap<>(); sec.put(t.substring(1, t.length() - 1).toLowerCase(Locale.US), cur); continue; }
+                int eq = t.indexOf('=');
+                if (cur != null && eq > 0) cur.put(t.substring(0, eq).trim().toLowerCase(Locale.US), t.substring(eq + 1).trim());
+            }
+            for (int i = 1; sec.containsKey("palmfile" + i); i++) {
+                java.util.Map<String, String> f = sec.get("palmfile" + i);
+                String src = (dir + f.getOrDefault("source", "")).replace('\\', '/');
+                byte[] d = null;
+                for (java.util.Map.Entry<String, byte[]> x : entries.entrySet()) if (x.getKey().equalsIgnoreCase(src)) d = x.getValue();
+                if (d == null) throw new Exception("The installer lists " + src + ", which isn't in the zip");
+                String file = baseName(src);
+                String target = f.getOrDefault("target", "RAM").toUpperCase(Locale.US);
+                String folder = f.getOrDefault("folder", "").replace('\\', '/').replaceAll("^/+|/+$", "");
+                out.add(new CardFile(target.equals("CARD") && !folder.isEmpty() ? "/" + folder + "/" + file : "/PALM/Launcher/" + file, d));
+            }
+            return out;
+        }
+        for (java.util.Map.Entry<String, byte[]> e : entries.entrySet()) {   /* no installer: databases to Launcher, the rest as laid out */
+            String n = e.getKey();
+            if (isPalmDb(n)) out.add(new CardFile("/PALM/Launcher/" + baseName(n), e.getValue()));
+            else if (!n.toLowerCase(Locale.US).matches(".*\\.(exe|pdf|txt|ini|htm|html|doc)$")) out.add(new CardFile("/" + n, e.getValue()));
+        }
+        return out;
+    }
+
+    private void installFiles(java.util.List<Uri> uris) {
+        if (uris.isEmpty()) return;
+        toast("Installing…");
+        new Thread(() -> {
+            int copied = 0; String err = null;
+            try {
+                for (Uri u : uris) {
+                    String name = displayName(u);
+                    byte[] d = readAll(u, 256 << 20);
+                    if (d == null) throw new Exception("Couldn't read " + name);
+                    for (CardFile f : plan(name, d)) {
+                        if (!NativeLib.cardPut(cardFile().getAbsolutePath(), f.path, f.data)) throw new Exception("The SD card is full or couldn't be written");
+                        copied++;
+                    }
+                }
+            } catch (Exception e) { err = e.getMessage(); }
+            final int n = copied; final String e2 = err;
+            ui.post(() -> {
+                if (n > 0) prefs.edit().putBoolean("cardChanged", true).apply();
+                if (e2 != null) toast(e2);
+                else toast(n + (n == 1 ? " file" : " files") + " copied to the SD card. Find them in the launcher's card category.");
+                if (screen == SCREEN_HOME) showHome();
+            });
+        }).start();
+    }
+
+    private void showCard() {
+        screen = SCREEN_SETTINGS;
+        LinearLayout list = new LinearLayout(this);
+        page("SD card", list, pill("Back", v -> showHome()), pill("Install", v -> pickInstall()));
+        listCardFolder(list, "", 0);
+        if (list.getChildCount() == 0) {
+            TextView t = text("The card is empty. Install a Tapwave store .zip or .prc files to fill it.", 15, SUBTEXT, false);
+            t.setPadding(dp(4), dp(8), dp(4), dp(8));
+            list.addView(t);
+        }
+        list.addView(sectionTitle("Card"));
+        list.addView(row("Erase the SD card", "Removes everything on the emulated card", null, v -> confirm("Erase the SD card?",
+                "Everything on the emulated card is deleted.", "Erase", () -> {
+                    if (cardFile().delete()) prefs.edit().putBoolean("cardChanged", true).apply();
+                    showCard();
+                })));
+    }
+
+    private void listCardFolder(LinearLayout list, String folder, int depth) {
+        if (!cardFile().exists() || depth > 4) return;
+        String l = NativeLib.cardList(cardFile().getAbsolutePath(), folder);
+        for (String line : l.split("\n")) {
+            String[] p = line.split("\t");
+            if (p.length < 3) continue;
+            boolean dir = p[2].equals("1");
+            String indent = new String(new char[depth * 3]).replace('\0', ' ');
+            TextView t = text(indent + (dir ? "📁 " : "    ") + p[0] + (dir ? "" : String.format(Locale.US, "   %.1f MB", Long.parseLong(p[1]) / 1048576.0)),
+                    14, dir ? TEXT : SUBTEXT, dir);
+            t.setPadding(dp(4), dp(2), dp(4), dp(2));
+            list.addView(t);
+            if (dir) listCardFolder(list, folder.isEmpty() ? p[0] : folder + "/" + p[0], depth + 1);
+        }
+    }
+
     // ---------------------------------------------------------------- game --
     private void stopEmu() {
         if (!running) return;
@@ -726,7 +885,9 @@ public class MainActivity extends Activity {
     private void powerOn(File state) {
         byte[] rom = readFile(romFile());
         if (rom == null) { toast("Choose your Zodiac ROM first"); showSettings(); return; }
-        if (!NativeLib.boot(rom, autosaveFile().getAbsolutePath())) { toast(NativeLib.lastError()); return; }
+        boolean changed = prefs.getBoolean("cardChanged", false);
+        if (!NativeLib.boot(rom, autosaveFile().getAbsolutePath(), cardFile().getAbsolutePath(), changed)) { toast(NativeLib.lastError()); return; }
+        prefs.edit().putBoolean("cardChanged", false).apply();
         if (state != null && !NativeLib.loadState(state.getAbsolutePath())) toast("Couldn't load that state; started normally");
         running = true;
         enterGame();

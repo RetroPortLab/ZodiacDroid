@@ -14,6 +14,10 @@
 #include <unistd.h>
 
 #include "zodiac.h"
+#include "fatimg.h"
+#include <aaudio/AAudio.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 
 #define TAG "ZodiacDroid"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
@@ -26,6 +30,9 @@ static volatile int running, paused, filter;
 static volatile float fps;
 static char last_error[256];
 static char autosave_path[1024];
+static int card_fd = -1;
+static volatile int reinsert_in;   /* frames until the card goes back in after a forced eject */
+static AAudioStream *audio_stream;
 
 /* latched input */
 static volatile int touch_x, touch_y, touch_down;
@@ -205,6 +212,7 @@ static void *run(void *arg) {
             continue;
         }
         apply_input();
+        if (reinsert_in > 0 && --reinsert_in == 0 && card_fd >= 0) sd_attach(card_fd, (uint64_t)lseek(card_fd, 0, SEEK_END));
         zod_run_frame();
         present();
 
@@ -226,6 +234,49 @@ static void stop_thread(void) {
     if (!running) return;
     running = 0;
     pthread_join(thread, NULL);
+}
+
+/* ---------------------------------------------------------------- audio */
+
+static aaudio_data_callback_result_t audio_cb(AAudioStream *st, void *user, void *data, int32_t frames) {
+    (void)st; (void)user;
+    int16_t *out = data;
+    int got = paused ? 0 : zod_audio_read(out, frames);
+    if (got < frames) memset(out + got * 2, 0, (size_t)(frames - got) * 4);
+    return AAUDIO_CALLBACK_RESULT_CONTINUE;
+}
+
+static void audio_open(void) {
+    if (audio_stream) return;
+    AAudioStreamBuilder *b;
+    if (AAudio_createStreamBuilder(&b) != AAUDIO_OK) return;
+    AAudioStreamBuilder_setFormat(b, AAUDIO_FORMAT_PCM_I16);
+    AAudioStreamBuilder_setChannelCount(b, 2);
+    AAudioStreamBuilder_setSampleRate(b, (int32_t)audio_rate);
+    AAudioStreamBuilder_setPerformanceMode(b, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
+    AAudioStreamBuilder_setDataCallback(b, audio_cb, NULL);
+    if (AAudioStreamBuilder_openStream(b, &audio_stream) == AAUDIO_OK) AAudioStream_requestStart(audio_stream);
+    else audio_stream = NULL;
+    AAudioStreamBuilder_delete(b);
+}
+
+static void audio_close(void) {
+    if (!audio_stream) return;
+    AAudioStream_requestStop(audio_stream);
+    AAudioStream_close(audio_stream);
+    audio_stream = NULL;
+}
+
+/* ---------------------------------------------------------------- SD card image */
+
+#define CARD_MB 512
+
+static int card_open_rw(const char *path) {
+    int fd = open(path, O_RDWR | O_CREAT, 0644);
+    if (fd < 0) return -1;
+    struct stat st;
+    if (fstat(fd, &st) == 0 && st.st_size == 0 && !fat_format(fd, (uint64_t)CARD_MB << 20)) { close(fd); return -1; }
+    return fd;
 }
 
 /* ---------------------------------------------------------------- JNI */
@@ -252,9 +303,12 @@ JNIEXPORT jboolean JNICALL FN(checkRom)(JNIEnv *env, jclass c, jbyteArray rom) {
 }
 
 /* Load the ROM and power on: resume from the autosave (the handheld's memory) when there is one. */
-JNIEXPORT jboolean JNICALL FN(boot)(JNIEnv *env, jclass c, jbyteArray rom, jstring autosave) {
+JNIEXPORT jboolean JNICALL FN(boot)(JNIEnv *env, jclass c, jbyteArray rom, jstring autosave, jstring card, jboolean card_changed) {
     if (!FN(checkRom)(env, c, rom)) return JNI_FALSE;
     jstr(env, autosave, autosave_path, sizeof autosave_path);
+    char cp[1024]; jstr(env, card, cp, sizeof cp);
+    if (card_fd >= 0) { close(card_fd); card_fd = -1; }
+    if (cp[0]) card_fd = card_open_rw(cp);
     zod.model = 2;
     zod_reset();
     if (autosave_path[0] && access(autosave_path, F_OK) == 0) {
@@ -263,6 +317,11 @@ JNIEXPORT jboolean JNICALL FN(boot)(JNIEnv *env, jclass c, jbyteArray rom, jstri
             zod_reset();
         }
     }
+    /* Files were added while the handheld was off: show it the card being taken out and put back,
+     * so Palm OS drops what it had cached about the old contents. */
+    if (card_fd >= 0 && card_changed) { sd_attach(-1, 0); reinsert_in = 90; }
+    else if (card_fd >= 0) sd_attach(card_fd, (uint64_t)lseek(card_fd, 0, SEEK_END));
+    else sd_attach(-1, 0);
     touch_down = 0; buttons = 0; stick_x = stick_y = 0;
     return JNI_TRUE;
 }
@@ -281,13 +340,47 @@ JNIEXPORT void JNICALL FN(setSurface)(JNIEnv *env, jclass c, jobject surface) {
 
 JNIEXPORT void JNICALL FN(start)(JNIEnv *env, jclass c) {
     (void)env; (void)c;
+    audio_open();
     if (running) return;
     paused = 0;
     running = 1;
     pthread_create(&thread, NULL, run, NULL);
 }
 
-JNIEXPORT void JNICALL FN(stop)(JNIEnv *env, jclass c) { (void)env; (void)c; stop_thread(); }
+JNIEXPORT void JNICALL FN(stop)(JNIEnv *env, jclass c) {
+    (void)env; (void)c;
+    stop_thread();
+    audio_close();
+    sd_attach(-1, 0);
+    if (card_fd >= 0) { fsync(card_fd); close(card_fd); card_fd = -1; }
+}
+
+/* Copy a file onto the SD card image (the emulator must be stopped). */
+JNIEXPORT jboolean JNICALL FN(cardPut)(JNIEnv *env, jclass c, jstring card, jstring path, jbyteArray data) {
+    (void)c;
+    char cp[1024], pp[1024];
+    jstr(env, card, cp, sizeof cp); jstr(env, path, pp, sizeof pp);
+    int fd = card_open_rw(cp);
+    if (fd < 0) return JNI_FALSE;
+    jsize len = (*env)->GetArrayLength(env, data);
+    jbyte *b = (*env)->GetByteArrayElements(env, data, NULL);
+    int ok = fat_write_file(fd, pp, (const uint8_t *)b, (uint32_t)len);
+    (*env)->ReleaseByteArrayElements(env, data, b, JNI_ABORT);
+    fsync(fd); close(fd);
+    return ok ? JNI_TRUE : JNI_FALSE;
+}
+
+/* "name\tsize\tisdir" lines for a folder of the card image ("" = root) */
+JNIEXPORT jstring JNICALL FN(cardList)(JNIEnv *env, jclass c, jstring card, jstring path) {
+    (void)c;
+    char cp[1024], pp[1024];
+    jstr(env, card, cp, sizeof cp); jstr(env, path, pp, sizeof pp);
+    static char out[65536];
+    out[0] = 0;
+    int fd = open(cp, O_RDONLY);
+    if (fd >= 0) { int n = fat_list(fd, pp, out, sizeof out); out[n < 0 ? 0 : n] = 0; close(fd); }
+    return (*env)->NewStringUTF(env, out);
+}
 
 JNIEXPORT void JNICALL FN(setPaused)(JNIEnv *env, jclass c, jboolean p) { (void)env; (void)c; paused = p; }
 JNIEXPORT void JNICALL FN(setFilter)(JNIEnv *env, jclass c, jint f) { (void)env; (void)c; filter = f; }

@@ -248,12 +248,15 @@ static void w42_int_update(void) {
         w42_int_port = 0; w42_int_pin = 13;
         if (e) sscanf(e, "%d.%d", &w42_int_port, &w42_int_pin);
     }
-    int active = (REG(0x204) & REG(0x200) & 0xFFFF) != 0;
+    /* GEN_INT_CNTL bit0 enables the display interrupts reported in status bits 4/6;
+     * bit 25 is enabled and reported in place */
+    uint32_t st = REG(0x204), cn = REG(0x200);
+    int active = ((cn & 1) && (st & 0x50)) || (st & cn & 0x02000000);
     gpio_set_input(w42_int_port, 1u << w42_int_pin, active ? 0 : 1);
 }
 
 void w4200_vblank(void) {
-    REG(0x204) |= getenv("W42VBL") ? strtoul(getenv("W42VBL"), 0, 16) : 1;
+    REG(0x204) |= 0x10 | (REG(0x200) & 0x02000000);
     w42_int_update();
 }
 
