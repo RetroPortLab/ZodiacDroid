@@ -257,6 +257,40 @@ static void dma_irq(void) {
     irq_set(61, (disr & ~dimr & 0x7FF) != 0);
 }
 
+/* Memory-to-memory transfers (software-started channels): done at once.
+ * SMOD/DMOD: 0 linear, 1 2D (rows of X bytes, W apart, Y rows from the XSR/YSR/WSR set chosen by MSEL), 2 FIFO. */
+static uint8_t *dma_ptr(uint32_t pa, int write) {
+    uint8_t *page = bus_page(pa & ~0xFFFu, write);
+    return page ? page + (pa & 0xFFF) : NULL;
+}
+
+static void dma_byte_copy(uint32_t s, uint32_t d) {
+    uint8_t *ps = dma_ptr(s, 0), *pd = dma_ptr(d, 1);
+    uint8_t v = ps ? *ps : (uint8_t)bus_io_read(s, 1);
+    if (pd) *pd = v; else bus_io_write(d, v, 1);
+}
+
+static void dma_mem(int ch) {
+    uint32_t base = DMA + 0x80 + ch * 0x40;
+    uint32_t ccr = IOREG(base + 0x0C), sar = IOREG(base), dar = IOREG(base + 4), cnt = IOREG(base + 8) & 0xFFFFFF;
+    int smod = (ccr >> 10) & 3, dmod = (ccr >> 12) & 3, set = (ccr >> 8) & 1;
+    uint32_t xs = IOREG(DMA + 0x50 + set * 0x0C) & 0xFFFF, ys = IOREG(DMA + 0x54 + set * 0x0C) & 0xFFFF, ws = IOREG(DMA + 0x58 + set * 0x0C) & 0xFFFF;
+    /* fast path: both linear and both in plain memory */
+    for (uint32_t i = 0; i < cnt; i++) {
+        uint32_t so = i, doff = i;
+        if (smod == 1 && xs) so = (i / xs) * ws + i % xs;
+        if (dmod == 1 && xs) doff = (i / xs) * ws + i % xs;
+        if (smod == 2) so = i & 3;
+        if (dmod == 2) doff = i & 3;
+        dma_byte_copy(sar + so, dar + doff);
+    }
+    (void)ys;
+    if (sd_log) fprintf(stderr, "[DMA] ch%d mem %08x -> %08x %u bytes ccr=%x\n", ch, sar, dar, cnt, ccr);
+    IOREG(base + 0x0C) = ccr & ~1u;
+    IOREG(DMA + 0x04) |= 1u << ch;
+    dma_irq();
+}
+
 /* Run an SD channel to completion at once: the card is always ready. */
 static void dma_kick(int ch) {
     uint32_t base = DMA + 0x80 + ch * 0x40;
@@ -264,6 +298,7 @@ static void dma_kick(int ch) {
     if (!(ccr & 1) || !(IOREG(DMA) & 1)) return;
     uint32_t sar = IOREG(base), dar = IOREG(base + 4), cnt = IOREG(base + 8) & 0xFFFFFF;
     if (dar == SSI_STX_PA) { if (!ach[ch].active) audio_start(ch); return; }
+    if (!(ccr & 8) && sar != SDHC_BUF_PA && dar != SDHC_BUF_PA) { dma_mem(ch); return; }
     int from_sd = sar == SDHC_BUF_PA, to_sd = dar == SDHC_BUF_PA;
     if (!from_sd && !to_sd) return;
     if (from_sd && sd.dir != 1) return;     /* data not there yet: the command will kick us */
