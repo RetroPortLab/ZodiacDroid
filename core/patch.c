@@ -109,7 +109,12 @@ static void display_blit(void) {
 volatile int zod_vibrate;
 static void vibrator_set(void) { zod_vibrate = cpu.r[0] != 0; }
 
+/* The OS key-wake handler ignores a wake until 250 ms after the previous one, which made every stick
+ * push take ~16 frames to register. Shorten that wait. */
+static void wake_holdoff(void) { cpu.r[1] = 30000; }
+
 static const Patch patches[] = {
+    { 0x20089A5A, 0xd3ee4288, wake_holdoff, "key wake hold-off 250 ms -> 30 ms" },
     { 0x200B5BF0, 0xE92D4278, vibrator_set, "vibration motor on/off" },
     { 0x2009A63C, 0xE3810009, display_blit, "display blit (queued copy never completed)" },
     { 0x200A4524, 0xE19A0000, sig_ok, "database signature check" },

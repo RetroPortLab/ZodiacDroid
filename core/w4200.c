@@ -150,7 +150,7 @@ void w4200_stick_tick(void) {
     int off = real_off || eff_hold > 0;
     if (low > 0) { if (--low == 0) gpio_set_input(0, 1u << 11, 1); return; }
     if (!off) { hold = 0; return; }
-    if (hold++ % 6 == 0) { gpio_set_input(0, 1u << 11, 0); low = 3; }
+    if (hold++ % 4 == 0) { gpio_set_input(0, 1u << 11, 0); low = 2; }
 }
 
 static uint32_t adc_pop(void) {
