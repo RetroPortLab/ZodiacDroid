@@ -130,7 +130,10 @@ void zod_stick(int x, int y) {
     if (y < -32767) y = -32767;
     if (y > 32767) y = 32767;
     stick_x = x; stick_y = y;
-    if (x > 9000 || x < -9000 || y > 9000 || y < -9000) { eff_x = x; eff_y = y; eff_hold = 24; }
+    int off = x > 9000 || x < -9000 || y > 9000 || y < -9000;
+    static int was_off;
+    if (off) { if (!was_off) eff_hold = 20; eff_x = x; eff_y = y; }   /* a fresh press is kept ~20 frames so a short tap is sampled; later release is immediate */
+    was_off = off;
 }
 
 /* The OS notices a deflected stick promptly only when GPIO0 pin 11 (the key-wake line) is
@@ -138,9 +141,10 @@ void zod_stick(int x, int y) {
  * Pulse the line every few frames while the stick is off centre. */
 void w4200_stick_tick(void) {
     static int low, hold;
-    if (eff_hold > 0 && --eff_hold == 0) { eff_x = stick_x; eff_y = stick_y; }
-    else if (eff_hold == 0) { eff_x = stick_x; eff_y = stick_y; }
-    int off = eff_x > 9000 || eff_x < -9000 || eff_y > 9000 || eff_y < -9000;
+    int real_off = stick_x > 9000 || stick_x < -9000 || stick_y > 9000 || stick_y < -9000;
+    if (eff_hold > 0) eff_hold--;
+    if (real_off || eff_hold == 0) { eff_x = stick_x; eff_y = stick_y; }
+    int off = real_off || eff_hold > 0;
     if (low > 0) { if (--low == 0) gpio_set_input(0, 1u << 11, 1); return; }
     if (!off) { hold = 0; return; }
     if (hold++ % 6 == 0) { gpio_set_input(0, 1u << 11, 0); low = 3; }
