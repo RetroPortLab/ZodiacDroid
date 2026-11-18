@@ -21,6 +21,10 @@ ROM checks that can't pass without a real device (the EEPROM signature, database
 signatures, factory digitizer calibration) are bypassed by small, verified patches in
 `core/patch.c`. The ROM file itself is never modified.
 
+Unsigned software runs by default: the OS's application signature checks (the launch-time
+"Unsigned Application" check and the per-call "Signature Check" on Tapwave API callers) are
+bypassed, so no PopAccess/developer mode is needed.
+
 ## Layout
 
 - `core/`: the emulator (portable C)

@@ -35,6 +35,17 @@ static void hal_delay(void) {
  * UIAppShell then retries forever without loading them. Report success. */
 static void sig_ok(void) { cpu.r[0] = 0; cpu.r[10] = 0; }   /* continue at the orrs: result 0 = verified */
 
+/* Application signature check (DAL, called for every database launched or loaded). The device
+ * normally refuses anything without a valid Tapwave signature ("Unsigned Application" dialog)
+ * unless developer mode is on (the PopAccess utility on real hardware). Accept every
+ * application, so unsigned software runs by default. The function returns nonzero for "ok". */
+static void sig_accept_all(void) { cpu.r[0] = 1; cpu.r[15] = cpu.r[14] & ~1u; if (!(cpu.r[14] & 1)) cpu.cpsr &= ~0x20u; }
+
+/* "Is this code address inside a signed module?" Every Tapwave API entry point (TwInput, TwGfx,
+ * ...) asks this about its caller and raises a "Signature Check" error for unsigned code.
+ * Report every caller as trusted. Returns nonzero for "ok". */
+static void caller_trusted(void) { cpu.r[0] = 1; cpu.r[15] = cpu.r[14] & ~1u; if (!(cpu.r[14] & 1)) cpu.cpsr &= ~0x20u; }
+
 /* Battery level: the DAL samples the battery through a gauge we don't emulate, then
  * scales it by factory calibration data. Report a full battery (the result is clamped
  * to 50..950 by the DAL itself). */
@@ -42,6 +53,8 @@ static void battery_level(void) { cpu.r[0] = 900; cpu.r[15] = cpu.r[14] & ~1u; i
 
 static const Patch patches[] = {
     { 0x200A4524, 0xE19A0000, sig_ok, "database signature check" },
+    { 0x200A3FA8, 0xE92D4FFF, sig_accept_all, "application signature check (allow unsigned software)" },
+    { 0x200A5014, 0xE92D41F0, caller_trusted, "caller signature check (allow unsigned software)" },
     { 0x20084912, 0x2800491D, hal_delay, "HALDelay" },
     { 0x204B2BEC, 0xA210B580, pins_stub, "Pen Input Manager stub (UI)" },
     { 0x20055E28, 0xA2A6B580, pins_stub, "Pen Input Manager stub (system)" },

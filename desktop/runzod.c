@@ -128,6 +128,12 @@ int main(int argc, char **argv) {
     for (int f = 0; f < frames && !cpu.dbg_hit; f++) {
         if (f == iofrom) { zod.log_io = !getenv("LOG2D"); if (getenv("LOG2D")) zod.log_2d = atoi(getenv("LOG2D")); }
         if (getenv("PROF") && f == atoi(getenv("PROF"))) zod.prof = prof;
+        /* REMOUNT=frame ejects the card and puts it back 90 frames later (rescan for new files) */
+        if (cardp && getenv("REMOUNT")) {
+            int rf = atoi(getenv("REMOUNT"));
+            if (f == rf) sd_attach(-1, 0);
+            if (f == rf + 90) { int fd2 = open(cardp, O_RDWR); sd_attach(fd2, (uint64_t)lseek(fd2, 0, SEEK_END)); }
+        }
         /* MHZSEQ="frame:mhz;..." changes the CPU clock while running */
         if (getenv("MHZSEQ")) { const char *p = getenv("MHZSEQ"); int mf, mm; while (sscanf(p, "%d:%d", &mf, &mm) == 2) { if (f == mf) zod_set_cpu_mhz(mm); p = strchr(p, ';'); if (!p) break; p++; } }
         if (getenv("BRKSP")) sscanf(getenv("BRKSP"), "%x-%x", &cpu.dbg_sp_lo, &cpu.dbg_sp_hi);
