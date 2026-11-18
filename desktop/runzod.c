@@ -97,6 +97,9 @@ int main(int argc, char **argv) {
         free(sd);
     }
     if (getenv("MHZ")) zod_set_cpu_mhz(atoi(getenv("MHZ")));
+#if defined(__aarch64__)
+    { extern void cpu_jit_debug_signals(void); if (getenv("JITSIG")) cpu_jit_debug_signals(); }
+#endif
     { extern int sd_log; sd_log = getenv("SDLOG") != NULL; }
     if (cardp) {
         int fd = open(cardp, O_RDWR);
@@ -167,6 +170,9 @@ int main(int argc, char **argv) {
         else fprintf(stderr, "%s%08x: %08x", i ? "\n" : "", dumpa + i * 4, v);
     }
     if (dumpn) fprintf(stderr, "\n");
+#if defined(__aarch64__)
+    { extern void cpu_jit_stats(void); cpu_jit_stats(); }
+#endif
     if (getenv("RING")) { int n = atoi(getenv("RING")); for (int i = n; i > 0; i--) fprintf(stderr, "%08x\n", cpu.ring[(cpu.ring_pos - i) & 65535]); }
     if (getenv("IOREGS")) { uint32_t a, b; sscanf(getenv("IOREGS"), "%x-%x", &a, &b);
         for (uint32_t r = a; r < b; r += 4) fprintf(stderr, "%08x: %08x%s", r, zod.io[(r - IO_BASE) >> 2], ((r - a) & 0xC) == 0xC ? "\n" : "  "); }

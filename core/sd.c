@@ -267,7 +267,7 @@ static uint8_t *dma_ptr(uint32_t pa, int write) {
 static void dma_byte_copy(uint32_t s, uint32_t d) {
     uint8_t *ps = dma_ptr(s, 0), *pd = dma_ptr(d, 1);
     uint8_t v = ps ? *ps : (uint8_t)bus_io_read(s, 1);
-    if (pd) *pd = v; else bus_io_write(d, v, 1);
+    if (pd) { *pd = v; cpu_phys_written(d, 1); } else bus_io_write(d, v, 1);
 }
 
 static void dma_mem(int ch) {
@@ -314,6 +314,7 @@ static void dma_kick(int ch) {
         else { if (!data_put(*p)) break; }
         done++;
     }
+    if (from_sd) cpu_phys_written(dar, done);
     if (sd_log) fprintf(stderr, "[SD] DMA ch%d %s %u/%u bytes at %08x\n", ch, from_sd ? "read" : "write", done, cnt, from_sd ? dar : sar);
     IOREG(base + 0x0C) = ccr & ~1u;
     IOREG(DMA + 0x04) |= 1u << ch;

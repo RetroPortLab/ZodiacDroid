@@ -62,6 +62,12 @@ uint32_t cpu_get_cpsr(void);
 void     cpu_set_cpsr(uint32_t v);
 void     cpu_tlb_flush(void);
 
+/* recompiler (arm64 builds) */
+extern int cpu_jit;                                  /* 1 = use it when available */
+int      cpu_jit_available(void);
+void     cpu_code_changed(void);                     /* drop all translated code */
+void     cpu_phys_written(uint32_t pa, uint32_t len); /* guest memory written behind the CPU's back (DMA) */
+
 /* virtual memory access for HLE/debug helpers (no exceptions raised; return 0 on fault) */
 int      cpu_vread32(uint32_t va, uint32_t *out);
 int      cpu_vwrite32(uint32_t va, uint32_t v);

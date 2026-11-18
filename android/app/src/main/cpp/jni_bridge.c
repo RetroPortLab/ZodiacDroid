@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 #include "zodiac.h"
+#include "cpu.h"
 #include "fatimg.h"
 #include <aaudio/AAudio.h>
 #include <fcntl.h>
@@ -28,6 +29,7 @@ static int win_w, win_h;
 static pthread_t thread;
 static volatile int running, paused, filter;
 static volatile int clock_setting;      /* 0 = auto, else MHz */
+static volatile int jit_setting = 1;    /* use the recompiler */
 static int cur_mhz = 200;
 static volatile float fps;
 static char last_error[256];
@@ -214,6 +216,7 @@ static void *run(void *arg) {
             continue;
         }
         apply_input();
+        { int want = jit_setting && cpu_jit_available(); if (want != cpu_jit) cpu_jit = want; }
         if (reinsert_in > 0 && --reinsert_in == 0 && card_fd >= 0) sd_attach(card_fd, (uint64_t)lseek(card_fd, 0, SEEK_END));
         zod_run_frame();
         present();
@@ -401,6 +404,8 @@ JNIEXPORT jstring JNICALL FN(cardList)(JNIEnv *env, jclass c, jstring card, jstr
 JNIEXPORT void JNICALL FN(setPaused)(JNIEnv *env, jclass c, jboolean p) { (void)env; (void)c; paused = p; }
 JNIEXPORT void JNICALL FN(setFilter)(JNIEnv *env, jclass c, jint f) { (void)env; (void)c; filter = f; }
 JNIEXPORT jfloat JNICALL FN(getFps)(JNIEnv *env, jclass c) { (void)env; (void)c; return fps; }
+JNIEXPORT void JNICALL FN(setJit)(JNIEnv *env, jclass c, jboolean on) { (void)env; (void)c; jit_setting = on; }
+JNIEXPORT jboolean JNICALL FN(jitAvailable)(JNIEnv *env, jclass c) { (void)env; (void)c; return cpu_jit_available() ? JNI_TRUE : JNI_FALSE; }
 JNIEXPORT void JNICALL FN(setClock)(JNIEnv *env, jclass c, jint mhz) { (void)env; (void)c; clock_setting = mhz; if (!mhz) cur_mhz = 200; }
 JNIEXPORT jint JNICALL FN(getClock)(JNIEnv *env, jclass c) { (void)env; (void)c; return (jint)(zod.cpu_hz / 1000000u); }
 

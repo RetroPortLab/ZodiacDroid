@@ -72,7 +72,8 @@ public class MainActivity extends Activity {
     private final Runnable fpsTick = new Runnable() {
         @Override public void run() {
             if (fpsView == null || screen != SCREEN_GAME) return;
-            fpsView.setText(String.format(Locale.US, "%.0f FPS  %d MHz", NativeLib.getFps(), NativeLib.getClock()));
+            fpsView.setText(String.format(Locale.US, "%.0f FPS  %d MHz  %s", NativeLib.getFps(), NativeLib.getClock(),
+                    prefs.getBoolean("jit", true) && NativeLib.jitAvailable() ? "JIT" : "INT"));
             ui.postDelayed(this, 500);
         }
     };
@@ -341,6 +342,15 @@ public class MainActivity extends Activity {
         list.addView(fps);
 
         list.addView(sectionTitle("Performance"));
+        LinearLayout jit = row("CPU emulation", "The recompiler translates the Zodiac's ARM code for this device's CPU "
+                + "and is several times faster. Switch to the interpreter if a game misbehaves",
+                prefs.getBoolean("jit", true) ? "Recompiler" : "Interpreter", null);
+        jit.setOnClickListener(v -> {
+            boolean on = !prefs.getBoolean("jit", true);
+            prefs.edit().putBoolean("jit", on).apply();
+            setRowValue(jit, on ? "Recompiler" : "Interpreter");
+        });
+        list.addView(jit);
         LinearLayout clock = row("CPU clock", "The Zodiac runs at 200 MHz. Lower clocks can make 3D games stall, "
                 + "so only change this to experiment", clockName(clockSetting()), null);
         clock.setOnClickListener(v -> {
@@ -367,7 +377,7 @@ public class MainActivity extends Activity {
 
         list.addView(sectionTitle("About"));
         TextView about = text("ZodiacDroid v" + versionName() + " is an experimental Tapwave Zodiac emulator written from scratch "
-                + "(ARM920T, i.MX1 and ATI W4200). It needs your own Zodiac ROM. Sound is not emulated yet. "
+                + "(ARM920T, i.MX1 and ATI W4200). It needs your own Zodiac ROM. "
                 + "Not affiliated with Tapwave or PalmSource.", 14, SUBTEXT, false);
         about.setPadding(dp(4), 0, dp(4), dp(12));
         list.addView(about);
@@ -933,6 +943,7 @@ public class MainActivity extends Activity {
         }
         NativeLib.setFilter(filterMode());
         NativeLib.setClock(clockSetting());
+        NativeLib.setJit(prefs.getBoolean("jit", true));
         NativeLib.setButtons(0);
         NativeLib.setStick(0, 0);
         NativeLib.start();

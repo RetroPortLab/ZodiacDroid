@@ -99,6 +99,7 @@ static void apply_byte_patches(void) {
 
 void patches_install(void (*debug_hook)(uint32_t)) {
     apply_byte_patches();
+    cpu_code_changed();
     if (!bitmap) bitmap = calloc(1, 0x20000000 / 16);
     else memset(bitmap, 0, 0x20000000 / 16);
     user_hook = debug_hook;

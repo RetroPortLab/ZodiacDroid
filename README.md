@@ -6,7 +6,9 @@ supply from your own device.
 
 ## Emulated hardware
 
-- **CPU:** ARM920T (ARMv4T, ARM and Thumb), CP15 MMU with a software TLB
+- **CPU:** ARM920T (ARMv4T, ARM and Thumb), CP15 MMU with a software TLB. On arm64
+  devices a recompiler (`core/jit_a64.inc`) translates guest code blocks to AArch64;
+  the interpreter remains for everything else and can be selected in Settings
 - **SoC:** Motorola i.MX1 (MC9328MX1): AITC interrupts, GPT timers, RTC, GPIO buttons,
   I2C EEPROM, ASP touch screen ADC, UART logging
 - **Graphics:** ATI Imageon W4200: register file, command-processor ring (PM4 type 0/1/3
@@ -26,7 +28,9 @@ signatures, factory digitizer calibration) are bypassed by small, verified patch
   input, screenshots, I/O and 2D logging, save/load
 - `android/`: the Android app (library screen, ROM setup, controls, save states,
   screen filters, in-game menu, self-updater)
-- `tools/cputest/`: CPU self-test that runs compiled ARM and Thumb code
+- `tools/cputest/`: CPU self-test that runs compiled ARM and Thumb code, and
+  `fuzz.sh`, which runs random instruction sequences on the interpreter and the
+  recompiler (arm64 build under qemu) and compares the results
 
 ## Building
 

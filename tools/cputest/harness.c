@@ -8,6 +8,8 @@ static uint8_t mem[0x100000] __attribute__((aligned(4096)));
 uint8_t *bus_page(uint32_t pa, int w) { return pa < sizeof mem ? mem + (pa & ~0xFFFu) : NULL; }
 uint32_t bus_io_read(uint32_t pa, int s) { fprintf(stderr, "io read %08x\n", pa); return 0; }
 void bus_io_write(uint32_t pa, uint32_t v, int s) { fprintf(stderr, "io write %08x=%08x\n", pa, v); }
+#include "../../core/state.h"
+void st_bytes(StateIO *s, void *p, size_t n) { (void)s; (void)p; (void)n; }
 int main(int c, char **v) {
     FILE *f = fopen(v[1], "rb"); if (!f) return 1;
     fread(mem + 0x10000, 1, 0x80000, f); fclose(f);

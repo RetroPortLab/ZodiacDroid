@@ -8,6 +8,22 @@
 
 Cpu cpu;
 
+#if defined(__aarch64__) && !defined(NOJIT)
+#define ZJIT 1
+static void jit_tlb_flushed(void);
+static void jit_code_write(uint32_t pa);
+static int jit_page_code(uint32_t pa);
+static void jit_flush_all(void);
+static void jit_init(void);
+static int cpu_run_jit(int cycles);
+static int jit_ok;
+#else
+int cpu_jit = 0;
+void cpu_code_changed(void) {}
+void cpu_phys_written(uint32_t pa, uint32_t len) { (void)pa; (void)len; }
+int cpu_jit_available(void) { return 0; }
+#endif
+
 #define T_BIT 0x20
 #define F_BIT 0x40
 #define I_BIT 0x80
@@ -54,7 +70,12 @@ void cpu_set_cpsr(uint32_t v) {
 void cpu_set_irq(int l) { cpu.irq_line = l; update_pending(); if (l) cpu.halted = 0; }
 void cpu_set_fiq(int l) { cpu.fiq_line = l; update_pending(); if (l) cpu.halted = 0; }
 
-void cpu_tlb_flush(void) { memset(cpu.tlb_r, 0xFF, sizeof cpu.tlb_r); memset(cpu.tlb_w, 0xFF, sizeof cpu.tlb_w); }
+void cpu_tlb_flush(void) {
+    memset(cpu.tlb_r, 0xFF, sizeof cpu.tlb_r); memset(cpu.tlb_w, 0xFF, sizeof cpu.tlb_w);
+#ifdef ZJIT
+    jit_tlb_flushed();
+#endif
+}
 
 void cpu_reset(void) {
     memset(&cpu.r, 0, sizeof cpu.r);
@@ -67,6 +88,10 @@ void cpu_reset(void) {
     cpu.r[15] = 0;
     cpu_tlb_flush();
     update_pending();
+#ifdef ZJIT
+    jit_init();
+    jit_flush_all();
+#endif
 }
 
 /* ---------------------------------------------------------------- MMU */
@@ -134,6 +159,9 @@ static uint8_t *tlb_fill(uint32_t va, int write, int priv, uint32_t *pa_out, uin
     e->tag = va >> 12;
     e->pa = pa & ~0xFFFu;
     e->host = h;   /* bus_page returns the page base */
+#ifdef ZJIT
+    if (write && h && jit_ok && jit_page_code(pa)) e->tag |= 0x80000000u;   /* stores must check for code */
+#endif
     *pa_out = pa;
     return h ? h + (pa & 0xFFF) : NULL;
 }
@@ -158,8 +186,22 @@ static uint32_t rd_slow(uint32_t va, int size, int priv) {
 static void wr_slow(uint32_t va, uint32_t v, int size, int priv) {
     uint32_t pa, fsr;
     if ((cpu.ctrl & 2) && (va & (size - 1))) { data_abort(va, 1); return; }
-    uint8_t *h = tlb_fill(va, 1, priv, &pa, &fsr);
-    if (fsr) { data_abort(va, fsr); return; }
+    uint8_t *h;
+#ifdef ZJIT
+    TlbEnt *ce = &cpu.tlb_w[priv][(va >> 12) & (TLB_N - 1)];
+    if (ce->tag == ((va >> 12) | 0x80000000u) && ce->host) {   /* page holding translated code */
+        pa = ce->pa | (va & 0xFFF);
+        h = ce->host + (va & 0xFFF);
+        jit_code_write(pa);
+    } else
+#endif
+    {
+        h = tlb_fill(va, 1, priv, &pa, &fsr);
+        if (fsr) { data_abort(va, fsr); return; }
+#ifdef ZJIT
+        if (h && jit_ok) jit_code_write(pa);
+#endif
+    }
     if (h) {
         if (size == 4) *(uint32_t *)((uintptr_t)h & ~(uintptr_t)3) = v;
         else if (size == 2) *(uint16_t *)((uintptr_t)h & ~(uintptr_t)1) = (uint16_t)v;
@@ -247,12 +289,14 @@ int cpu_vread8(uint32_t va, uint8_t *out) {
 int cpu_vwrite32(uint32_t va, uint32_t v) {
     uint32_t pa; if (translate(va, 1, 1, &pa)) return 0;
     uint8_t *h = bus_page(pa, 1);
+    cpu_phys_written(pa & ~3u, 4);
     if (h) *(uint32_t *)(h + (pa & 0xFFC)) = v; else bus_io_write(pa & ~3u, v, 4);
     return 1;
 }
 int cpu_vwrite8(uint32_t va, uint8_t v) {
     uint32_t pa; if (translate(va, 1, 1, &pa)) return 0;
     uint8_t *h = bus_page(pa, 1);
+    cpu_phys_written(pa, 1);
     if (h) h[pa & 0xFFF] = v; else bus_io_write(pa, v, 1);
     return 1;
 }
@@ -883,7 +927,41 @@ static void thumb_step(uint32_t pc, uint32_t i) {
 
 void cpu_end_slice(void) { cpu.run_len -= cpu.budget; cpu.budget = 0; }
 
+/* one interpreted instruction at pc (interrupts, idle and HLE hooks already handled) */
+static inline __attribute__((always_inline)) void interp_step(uint32_t pc) {
+    uint32_t insn;
+    branched = 0;
+    cpu.abort = 0;
+    if (cpu.cpsr & T_BIT) {
+        if (!fetch16(pc, &insn)) { take_exception(0x0C, M_ABT, pc + 4, 0); return; }
+        if (cpu.trace_n) { cpu.trace_n--; fprintf(stderr, "T %08x: %04x  r0=%08x r1=%08x r2=%08x r3=%08x sp=%08x lr=%08x\n", pc, insn, cpu.r[0], cpu.r[1], cpu.r[2], cpu.r[3], cpu.r[13], cpu.r[14]); }
+        thumb_step(pc, insn);
+        if (cpu.abort) { take_exception(0x10, M_ABT, pc + 8, 0); cpu.budget -= 1; return; }
+        if (!branched) cpu.r[15] = pc + 2;
+        else if (cpu.r[15] != pc) { cpu.ring[cpu.ring_pos++ & 65535] = pc | 1; cpu.ring[cpu.ring_pos++ & 65535] = cpu.r[15] | ((cpu.cpsr >> 5) & 1); }
+    } else {
+        if (pc - pf_lo < pf_hi - pf_lo) {
+            uint32_t keep = cpu.ctrl, pa = pc; cpu.ctrl = pf_ctrl;
+            translate(pc, 0, 1, &pa); cpu.ctrl = keep;
+            uint8_t *pg = bus_page(pa, 0); insn = pg ? *(uint32_t *)(pg + (pa & 0xFFF)) : bus_io_read(pa, 4);
+        } else { pf_lo = pf_hi = 0;
+        if (!fetch32(pc, &insn)) { take_exception(0x0C, M_ABT, pc + 4, 0); return; } }
+        if (cpu.trace_n) { cpu.trace_n--; fprintf(stderr, "A %08x: %08x  r0=%08x r1=%08x r2=%08x r3=%08x sp=%08x lr=%08x\n", pc, insn, cpu.r[0], cpu.r[1], cpu.r[2], cpu.r[3], cpu.r[13], cpu.r[14]); }
+        if ((insn >> 28) == 0xE || cond_pass(insn >> 28)) {
+            if ((insn >> 28) == 0xF) { undefined(pc, insn, 0); branched = 1; }  /* v4: NV space (v5 BLX imm below) */
+            else arm_step(pc, insn);
+        }
+        if (cpu.abort) { take_exception(0x10, M_ABT, pc + 8, 0); cpu.budget -= 1; return; }
+        if (!branched) cpu.r[15] = pc + 4;
+        else if (cpu.r[15] != pc) { cpu.ring[cpu.ring_pos++ & 65535] = pc; cpu.ring[cpu.ring_pos++ & 65535] = cpu.r[15] | ((cpu.cpsr >> 5) & 1); }
+    }
+    cpu.budget -= 1;
+}
+
 int cpu_run(int cycles) {
+#ifdef ZJIT
+    if (cpu_jit && jit_ok && cpu.dbg_lo == cpu.dbg_hi && !cpu.trace_n) return cpu_run_jit(cycles);
+#endif
     cpu.budget = cycles;
     cpu.run_len = cycles;
     while (cpu.budget > 0) {
@@ -893,41 +971,17 @@ int cpu_run(int cycles) {
             else take_exception(0x18, M_IRQ, ret, 0);
         }
         if (cpu.halted) { cpu.budget = 0; break; }   /* idle: the rest of the slice passes */
-        uint32_t pc = cpu.r[15], insn;
+        uint32_t pc = cpu.r[15];
         if (pc - cpu.dbg_lo < cpu.dbg_hi - cpu.dbg_lo && (!cpu.dbg_sp_hi || cpu.r[13] - cpu.dbg_sp_lo < cpu.dbg_sp_hi - cpu.dbg_sp_lo)) { if (cpu.dbg_skip > 0) cpu.dbg_skip--; else { cpu.dbg_hit = 1; break; } }
-        branched = 0;
-        cpu.abort = 0;
         if (pc - 0x20000000u < cpu.hle_span) {
             uint32_t bi = (pc - 0x20000000u) >> 1;
             if ((cpu.hle_bitmap[bi >> 3] >> (bi & 7)) & 1) {
+                cpu.abort = 0;
                 cpu.hle_hook(pc);
                 if (cpu.r[15] != pc) { cpu.budget -= 1; continue; }
             }
         }
-        if (cpu.cpsr & T_BIT) {
-            if (!fetch16(pc, &insn)) { take_exception(0x0C, M_ABT, pc + 4, 0); continue; }
-            if (cpu.trace_n) { cpu.trace_n--; fprintf(stderr, "T %08x: %04x  r0=%08x r1=%08x r2=%08x r3=%08x sp=%08x lr=%08x\n", pc, insn, cpu.r[0], cpu.r[1], cpu.r[2], cpu.r[3], cpu.r[13], cpu.r[14]); }
-            thumb_step(pc, insn);
-            if (cpu.abort) { take_exception(0x10, M_ABT, pc + 8, 0); cpu.budget -= 1; continue; }
-            if (!branched) cpu.r[15] = pc + 2;
-            else if (cpu.r[15] != pc) { cpu.ring[cpu.ring_pos++ & 65535] = pc | 1; cpu.ring[cpu.ring_pos++ & 65535] = cpu.r[15] | ((cpu.cpsr >> 5) & 1); }
-        } else {
-            if (pc - pf_lo < pf_hi - pf_lo) {
-                uint32_t keep = cpu.ctrl, pa = pc; cpu.ctrl = pf_ctrl;
-                translate(pc, 0, 1, &pa); cpu.ctrl = keep;
-                uint8_t *pg = bus_page(pa, 0); insn = pg ? *(uint32_t *)(pg + (pa & 0xFFF)) : bus_io_read(pa, 4);
-            } else { pf_lo = pf_hi = 0;
-            if (!fetch32(pc, &insn)) { take_exception(0x0C, M_ABT, pc + 4, 0); continue; } }
-            if (cpu.trace_n) { cpu.trace_n--; fprintf(stderr, "A %08x: %08x  r0=%08x r1=%08x r2=%08x r3=%08x sp=%08x lr=%08x\n", pc, insn, cpu.r[0], cpu.r[1], cpu.r[2], cpu.r[3], cpu.r[13], cpu.r[14]); }
-            if ((insn >> 28) == 0xE || cond_pass(insn >> 28)) {
-                if ((insn >> 28) == 0xF) { undefined(pc, insn, 0); branched = 1; }  /* v4: NV space (v5 BLX imm below) */
-                else arm_step(pc, insn);
-            }
-            if (cpu.abort) { take_exception(0x10, M_ABT, pc + 8, 0); cpu.budget -= 1; continue; }
-            if (!branched) cpu.r[15] = pc + 4;
-            else if (cpu.r[15] != pc) { cpu.ring[cpu.ring_pos++ & 65535] = pc; cpu.ring[cpu.ring_pos++ & 65535] = cpu.r[15] | ((cpu.cpsr >> 5) & 1); }
-        }
-        cpu.budget -= 1;
+        interp_step(pc);
     }
     int done = (int)(cpu.run_len - cpu.budget);
     cpu.cycles += done;
@@ -938,4 +992,9 @@ int cpu_run(int cycles) {
 void cpu_state(StateIO *s) {
     st_bytes(s, &cpu, offsetof(Cpu, tlb_r));      /* registers, banks, CP15, timing */
     ST(s, pf_lo); ST(s, pf_hi); ST(s, pf_ctrl);
+    if (s->loading) cpu_code_changed();
 }
+
+#ifdef ZJIT
+#include "jit_a64.inc"
+#endif
