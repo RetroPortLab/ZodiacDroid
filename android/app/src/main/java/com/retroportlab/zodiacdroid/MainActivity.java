@@ -833,8 +833,16 @@ public class MainActivity extends Activity {
         }
         /* No installer: databases go to /PALM/Launcher, everything else (a game's data folder) goes
          * under /PALM/Programs with its folder layout kept. Mac resource-fork junk is skipped. */
+        /* A zip that wraps everything in a folder next to the .prc ("Game/game.prc", "Game/Data/...")
+         * is unpacked without that wrapper, so the data lands where the game looks for it. */
+        String wrap = "";
+        for (String k : entries.keySet()) {
+            String kn = k.replaceAll("^/+", "");
+            if (isPalmDb(kn) && !kn.startsWith("__MACOSX/") && kn.contains("/")) { wrap = kn.substring(0, kn.indexOf('/') + 1); break; }
+        }
         for (java.util.Map.Entry<String, byte[]> e : entries.entrySet()) {
             String n = e.getKey().replaceAll("^/+", "");
+            if (!wrap.isEmpty() && n.startsWith(wrap)) n = n.substring(wrap.length());
             String base = baseName(n);
             if (n.startsWith("__MACOSX/") || base.startsWith("._") || base.equals(".DS_Store")) continue;
             if (isPalmDb(n)) out.add(new CardFile("/PALM/Launcher/" + base, e.getValue()));

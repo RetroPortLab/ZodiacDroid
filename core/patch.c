@@ -75,7 +75,17 @@ static void new_boot(void) { cal_done = 0; }
  * to 50..950 by the DAL itself). */
 static void battery_level(void) { cpu.r[0] = 900; cpu.r[15] = cpu.r[14] & ~1u; if (!(cpu.r[14] & 1)) cpu.cpsr &= ~0x20u; }
 
+/* Surface-busy poll (graphics API at 0x20098CF8): a game that queues an asynchronous blit and then
+ * spins on this call waits for the blit to finish. The OS thread meant to finish it is never
+ * scheduled while the game spins, so complete the pending blit from inside the poll. */
+static void surface_busy_poll(void) {
+    uint32_t flags = 0;
+    if (cpu.r[1] != 0xFF051962u || !cpu_vread32(cpu.r[0] + 0x2C, &flags) || !(flags & 1)) return;
+    cpu.r[15] = 0x20098FD8u;          /* run the blit-completion routine instead, then return to the caller */
+}
+
 static const Patch patches[] = {
+    { 0x20098CF8, 0xE59F24C8, surface_busy_poll, "surface busy poll" },
     { 0x200A4524, 0xE19A0000, sig_ok, "database signature check" },
     { 0x200A3FA8, 0xE92D4FFF, sig_accept_all, "application signature check (allow unsigned software)" },
     { 0x2033259C, 0xE3560000, skip_setup_app, "run the Welcome setup app only once" },
