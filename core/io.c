@@ -468,12 +468,15 @@ void io_state(StateIO *s) {
 }
 
 /* Zodiac buttons -> GPIO inputs (active low). Home, Function and Power were identified by
- * their effect in Palm OS; A (select) and B (back) by their effect in Stuntcar Extreme. */
+ * their effect in Palm OS; A (select) and B (back) by their effect in Stuntcar Extreme.
+ * Pin PD13 is what Palm OS answers with "Discoverable for 3 minutes" (Bluetooth), so it is not a
+ * trigger: it is kept as EXTRA, unassigned by default. The triggers sit with Home and Power on
+ * port A pins 8 and 9, which Palm OS ignores. L, R, Bookmark are still inferred, not confirmed. */
 void zod_buttons(uint32_t mask) {
     static const struct { uint32_t bit; int port, pin; } map[] = {
         { ZB_HOME, 0, 7 }, { ZB_FUNCTION, 3, 12 }, { ZB_POWER, 0, 10 },
         { ZB_A, 3, 10 }, { ZB_B, 3, 8 }, { ZB_C, 3, 9 }, { ZB_D, 3, 14 },
-        { ZB_L, 3, 13 }, { ZB_R, 3, 7 }, { ZB_BOOKMARK, 0, 8 }, { ZB_EXTRA, 0, 9 },
+        { ZB_L, 0, 8 }, { ZB_R, 0, 9 }, { ZB_BOOKMARK, 3, 7 }, { ZB_EXTRA, 3, 13 },
     };
     for (unsigned i = 0; i < sizeof map / sizeof map[0]; i++)
         gpio_set_input(map[i].port, 1u << map[i].pin, (mask & map[i].bit) ? 0 : 1);
