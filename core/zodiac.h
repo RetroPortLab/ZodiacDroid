@@ -39,6 +39,7 @@ extern Zodiac zod;
 int  zod_load_rom(const uint8_t *data, size_t len, char *err, size_t errlen);
 void zod_reset(void);
 void zod_run_frame(void);            /* one 1/60s slice */
+void zod_touch(int x, int y, int down);   /* screen coordinates 0..479 x 0..319 */
 
 /* patch.c */
 void patches_install(void (*debug_hook)(uint32_t pc));

@@ -4,6 +4,7 @@
 #include "io.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 #define IOREG(off) zod.io[(off) >> 2]
 
@@ -99,6 +100,55 @@ static uint32_t i2c_read_dr(void) {
     return v;
 }
 
+/* ---------------------------------------------------------------- ASP (touch panel ADC) */
+/* Behaviour inferred from the DAL: ICNTLR bit4 enables the pen-down interrupt (source 46),
+ * ISTATR bit10 is the pen-down flag (write 1 to clear), register 0x34 holds the FIFO
+ * position, and PADFIFO samples come in groups of four (auto-zero, X, Y, aux) with the
+ * value in bits 15..7. */
+#define ASP 0x15000
+static int pen_down, pen_x, pen_y;     /* raw 9-bit panel coordinates */
+static unsigned asp_pos;
+
+void zod_touch(int x, int y, int down) {
+    /* landscape screen (480x320) -> raw panel coordinates (0..511) */
+    if (x < 0) x = 0;
+    if (x > 479) x = 479;
+    if (y < 0) y = 0;
+    if (y > 319) y = 319;
+    /* In landscape the DAL passes panel samples through almost unchanged, so feed it
+     * screen coordinates; Palm OS's own digitizer calibration then comes out near identity. */
+    pen_x = x;
+    pen_y = y;
+    if (down && !pen_down) {                /* pen-down edge latches ISTATR bit10 */
+        IOREG(ASP + 0x1C) |= 0x400;
+        if (IOREG(ASP + 0x18) & 0x10) irq_set(46, 1);
+    }
+    pen_down = down;
+}
+
+static uint32_t pen_raw(int v, int range, int axis) {
+    static int init, shift = 7, inv = 0, lo = 0, hi = 0;
+    if (!init) {
+        const char *e;
+        init = 1;
+        if ((e = getenv("PENSHIFT"))) shift = atoi(e);
+        if ((e = getenv("PENINV"))) inv = atoi(e);
+        if ((e = getenv("PENLO"))) lo = atoi(e);
+        if ((e = getenv("PENHI"))) hi = atoi(e);
+    }
+    if (inv & (1 << axis)) v = range - 1 - v;
+    if (hi > lo) return (uint32_t)(lo + (hi - lo) * v / range) & 0xFFFF;
+    return ((uint32_t)v << shift) & 0xFFFF;
+}
+
+static uint32_t asp_sample(void) {
+    unsigned k = asp_pos++ & 3;
+    if (k == 0) return pen_down ? 0 : 0xFF80;               /* auto-zero reference (no contact: high) */
+    if (k == 1) return pen_raw(pen_x, 480, 0);
+    if (k == 2) return pen_raw(pen_y, 320, 1);
+    return 0x2000;                                          /* aux */
+}
+
 /* ---------------------------------------------------------------- dispatch */
 
 void soc_init(void) {
@@ -107,11 +157,15 @@ void soc_init(void) {
     /* 0x50: serial EEPROM */
     i2c_devs[n_i2c_devs].addr = 0x50; memset(i2c_devs[n_i2c_devs].mem, 0xFF, 256); n_i2c_devs++;
     i2c_active = 0; i2c_cur = NULL;
+    pen_down = 0; asp_pos = 0;
 }
 
 int soc_read(uint32_t off, uint32_t *v) {
     switch (off) {
     case I2C + 0x10: *v = i2c_read_dr(); return 1;
+    case ASP + 0x00: *v = asp_sample(); return 1;
+    case ASP + 0x34: *v = 12; return 1;
+    case ASP + 0x1C: *v = IOREG(off) | (pen_down ? 0 : 0x400); return 1;   /* bit10 also reads set while the pen is up */           /* samples available (FIFO kept full) */
     }
     return 0;
 }
@@ -124,6 +178,9 @@ void soc_write(uint32_t off, uint32_t v, uint32_t old) {
         i2c_irq();
         break;
     case I2C + 0x10: i2c_write_dr(v); break;
+    case ASP + 0x10: asp_pos = 0; break;
+    case ASP + 0x18: IOREG(off) = v; irq_set(46, (v & 0x10) && (IOREG(ASP + 0x1C) & 0x400)); break;
+    case ASP + 0x1C: IOREG(off) = old & ~v; irq_set(46, (IOREG(ASP + 0x18) & 0x10) && (IOREG(off) & 0x400)); break;
     }
 }
 

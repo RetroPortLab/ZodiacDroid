@@ -58,7 +58,38 @@ void patch_arm(uint32_t va) {
     bitmap[bi >> 3] |= 1 << (bi & 7);
 }
 
+/* Byte-level fix-ups to 68k application code stored in the ROM. Each one is applied only if
+ * the expected bytes are present. */
+typedef struct { const char *find, *repl, *what; } BytePatch;
+static const BytePatch byte_patches[] = {
+    /* Digitizer calibration (Calibration panel): the emulated digitizer already reports
+     * exact screen positions, which the uncalibrated pen path maps 1:1. The panel's
+     * PenCalibrate call would replace that with a mapping derived from the device's factory
+     * EEPROM data, which we do not have. Skip the call (report success) so the 1:1 mapping
+     * stays and the panel's own confirmation tap check passes. */
+    { "2f2effbe486effb22f2eff92486effa64e4fa2713e00", "2f2effbe486effb22f2eff92486effa670004e713e00", "keep 1:1 digitizer calibration" },
+};
+
+static int unhex(const char *h, uint8_t *o) {
+    int n = 0;
+    while (h[0] && h[1]) { unsigned v; sscanf(h, "%2x", &v); o[n++] = (uint8_t)v; h += 2; }
+    return n;
+}
+
+static void apply_byte_patches(void) {
+    for (unsigned i = 0; i < sizeof byte_patches / sizeof byte_patches[0]; i++) {
+        uint8_t f[64], r[64];
+        int n = unhex(byte_patches[i].find, f);
+        unhex(byte_patches[i].repl, r);
+        int hits = 0;
+        for (uint32_t o = 0; o + n <= zod.rom_size; o += 2)
+            if (zod.flash[o] == f[0] && !memcmp(zod.flash + o, f, n)) { memcpy(zod.flash + o, r, n); hits++; }
+        if (!hits) fprintf(stderr, "patch '%s' not applied: ROM differs\n", byte_patches[i].what);
+    }
+}
+
 void patches_install(void (*debug_hook)(uint32_t)) {
+    apply_byte_patches();
     if (!bitmap) bitmap = calloc(1, 0x20000000 / 16);
     else memset(bitmap, 0, 0x20000000 / 16);
     user_hook = debug_hook;

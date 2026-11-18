@@ -24,7 +24,8 @@ static void hook(uint32_t pc) {
     for (int i = 0; i < nhooks; i++) if (hooks[i] == pc) {
         char s0[80], s1[80], s2[80];
         rdstr(cpu.r[0], s0, 80); rdstr(cpu.r[1], s1, 80); rdstr(cpu.r[2], s2, 80);
-        if (getenv("TRACEHOOK") && hook_hits == atoi(getenv("TRACEHOOK"))) cpu.trace_n = 80;
+        if (getenv("HOOKMEM")) { uint32_t a = cpu.r[strtoul(getenv("HOOKMEM"), 0, 10)], v0 = 0, v1 = 0; cpu_vread32(a, &v0); cpu_vread32(a + 4, &v1); fprintf(stderr, "  mem[r%s=%08x] = %08x %08x\n", getenv("HOOKMEM"), a, v0, v1); }
+        if (getenv("TRACEHOOK") && hook_hits == atoi(getenv("TRACEHOOK"))) cpu.trace_n = getenv("TRACELEN") ? atoi(getenv("TRACELEN")) : 80;
         if (hook_hits++ < (getenv("HOOKMAX") ? atoi(getenv("HOOKMAX")) : 400))
         {
             if (getenv("STACK") && hook_hits < (getenv("HOOKMAX") ? atoi(getenv("HOOKMAX")) : 400)) {
@@ -80,7 +81,17 @@ int main(int argc, char **argv) {
     }
     { extern int w2d_break_at; if (getenv("BRK2D")) w2d_break_at = atoi(getenv("BRK2D")); }
     if (getenv("BRK")) { sscanf(getenv("BRK"), "%x-%x", &cpu.dbg_lo, &cpu.dbg_hi); if (getenv("BRKSKIP")) cpu.dbg_skip = atoi(getenv("BRKSKIP")); }
-    for (int f = 0; f < frames && !cpu.dbg_hit; f++) zod_run_frame();
+    /* TAPS="frame:x,y;frame:x,y" taps the screen (held for 6 frames) */
+    int tapf[32], tapx[32], tapy[32], ntap = 0;
+    if (getenv("TAPS")) { const char *p = getenv("TAPS"); while (ntap < 32 && sscanf(p, "%d:%d,%d", &tapf[ntap], &tapx[ntap], &tapy[ntap]) == 3) { ntap++; p = strchr(p, ';'); if (!p) break; p++; } }
+    for (int f = 0; f < frames && !cpu.dbg_hit; f++) {
+        for (int t = 0; t < ntap; t++) {
+            if (f == tapf[t]) zod_touch(tapx[t], tapy[t], 1);
+            if (f == tapf[t] + (getenv("TAPLEN") ? atoi(getenv("TAPLEN")) : 6)) zod_touch(tapx[t], tapy[t], 0);
+        }
+        zod_run_frame();
+        if (getenv("SHOTEVERY") && f % atoi(getenv("SHOTEVERY")) == 0) { char pth[64]; snprintf(pth, sizeof pth, "/tmp/f_%05d.ppm", f); shot(pth); }
+    }
     if (cpu.dbg_hit) fprintf(stderr, "BREAK at %08x\n", cpu.r[15]);
     fprintf(stderr, "pc=%08x cpsr=%08x cycles=%llu halted=%d\n", cpu.r[15], cpu_get_cpsr(), (unsigned long long)cpu.cycles, cpu.halted);
     for (int i = 0; i < 16; i++) fprintf(stderr, "r%-2d=%08x%s", i, cpu.r[i], (i & 3) == 3 ? "\n" : "  ");

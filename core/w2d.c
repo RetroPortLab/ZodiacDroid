@@ -33,7 +33,7 @@ static struct {
     int active;
     int x, y, w, h;        /* destination rectangle */
     int cx, cy;            /* current position within it */
-    int mono;
+    int mono, nib;
     int bpp;
 } hb;
 
@@ -218,6 +218,7 @@ static void do_blit(int dx, int dy, int w, int h, int sx, int sy) {
 static void start_hostdata(int x, int y, int w, int h) {
     hb.active = 1; hb.x = x; hb.y = y; hb.w = w; hb.h = h; hb.cx = 0; hb.cy = 0;
     hb.mono = GMC_SRC_TYPE == 0 || GMC_SRC_TYPE == 1;
+    hb.nib = GMC_SRC_TYPE == 5;
     hb.bpp = dtype_bpp(GMC_DST_TYPE);
 }
 
@@ -237,11 +238,28 @@ static void host_pixel(uint32_t s, int is_bg_transparent_skip) {
 
 static void host_data(uint32_t v) {
     if (!hb.active) return;
-    if (hb.mono) {
-        /* 32 pixels per dword, LSB first (bit order from GMC byte_pix_order) */
-        int msb = (GMC >> 15) & 1;
+    if (hb.nib) {
+        /* 4-bit coverage values: blend source foreground over the destination */
+        for (int b = 0; b < 8 && hb.active; b++) {
+            int a = (v >> (b * 4)) & 15;
+            int x = hb.x + hb.cx, y = hb.y + hb.cy;
+            if (a && clip_ok(x, y)) {
+                uint32_t dbase = R(DST_OFFSET), dpitch = R(DST_PITCH) & 0x3FFF; int ok;
+                uint32_t d = get_px(dbase, dpitch, 16, x, y, &ok), f = R(DP_SRC_FRGD_CLR);
+                if (ok) {
+                    int r = (((f >> 11) & 31) * a + ((d >> 11) & 31) * (15 - a)) / 15;
+                    int g = (((f >> 5) & 63) * a + ((d >> 5) & 63) * (15 - a)) / 15;
+                    int bl = ((f & 31) * a + (d & 31) * (15 - a)) / 15;
+                    put_px(dbase, dpitch, 16, x, y, (uint32_t)(r << 11 | g << 5 | bl));
+                }
+            }
+            if (++hb.cx >= hb.w) { hb.cx = 0; if (++hb.cy >= hb.h) hb.active = 0; break; }
+        }
+    } else if (hb.mono) {
+        /* 32 pixels per dword; GMC byte_pix_order 0 = MSB first (as on the Radeon) */
+        int msb = !((GMC >> 15) & 1);
         for (int b = 0; b < 32 && hb.active; b++) {
-            int bit = msb ? (v >> (31 - b)) & 1 : (v >> b) & 1;
+            int bit = msb ? (v >> ((b & ~7) + 7 - (b & 7))) & 1 : (v >> b) & 1;   /* bytes in order, bits MSB-first */
             int skip = !bit && GMC_SRC_TYPE == 1;
             host_pixel(bit ? R(DP_SRC_FRGD_CLR) : R(DP_SRC_BKGD_CLR), skip);
             if (hb.cx == 0) break;   /* each row starts on a new dword */
