@@ -880,11 +880,48 @@ public class MainActivity extends Activity {
             list.addView(t);
         }
         list.addView(sectionTitle("Card"));
+        list.addView(row("Uninstall games and apps", "Remove an app or a game's data from the card", null, v -> showUninstall()));
         list.addView(row("Erase the SD card", "Removes everything on the emulated card", null, v -> confirm("Erase the SD card?",
                 "Everything on the emulated card is deleted.", "Erase", () -> {
                     if (cardFile().delete()) prefs.edit().putBoolean("cardChanged", true).apply();
                     showCard();
                 })));
+    }
+
+    /** Lists what is installed (apps in /PALM/Launcher, game data in /PALM/Programs) with a way to remove each. */
+    private void showUninstall() {
+        screen = SCREEN_SETTINGS;
+        LinearLayout list = new LinearLayout(this);
+        page("Uninstall", list, pill("Back", v -> showCard()));
+        int shown = 0;
+        for (String folder : new String[]{"PALM/Launcher", "PALM/Programs"}) {
+            if (!cardFile().exists()) break;
+            boolean first = true;
+            for (String line : NativeLib.cardList(cardFile().getAbsolutePath(), folder).split("\n")) {
+                String[] p = line.split("\t");
+                if (p.length < 3) continue;
+                if (first) { list.addView(sectionTitle(folder.endsWith("Launcher") ? "Apps and games (/PALM/Launcher)" : "Game data (/PALM/Programs)")); first = false; }
+                final String path = folder + "/" + p[0];
+                boolean dir = p[2].equals("1");
+                String sub = dir ? "Folder with everything in it" : String.format(Locale.US, "%.1f MB", Long.parseLong(p[1]) / 1048576.0);
+                list.addView(row((dir ? "📁 " : "") + p[0], sub, null, v -> confirm("Remove " + p[0] + "?",
+                        dir ? "The folder and everything in it is deleted from the card." : "The file is deleted from the card.", "Remove", () -> {
+                            if (NativeLib.cardDelete(cardFile().getAbsolutePath(), path)) prefs.edit().putBoolean("cardChanged", true).apply();
+                            else toast("Couldn't remove " + p[0]);
+                            showUninstall();
+                        })));
+                shown++;
+            }
+        }
+        if (shown == 0) {
+            TextView t = text("Nothing is installed on the card.", 15, SUBTEXT, false);
+            t.setPadding(dp(4), dp(8), dp(4), dp(8));
+            list.addView(t);
+        } else {
+            TextView t = text("A game usually has a file in Apps and a folder in Game data; remove both to uninstall it completely.", 13, SUBTEXT, false);
+            t.setPadding(dp(4), dp(12), dp(4), dp(8));
+            list.addView(t);
+        }
     }
 
     private void listCardFolder(LinearLayout list, String folder, int depth) {

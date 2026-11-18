@@ -332,6 +332,45 @@ int fat_write_file(int fd, const char *path, const uint8_t *data, uint32_t len) 
     return vol_close(&v, 1) && ok;
 }
 
+/* Delete the entry (and its long-name entries) at idx of dir; folders are emptied first. */
+static void del_entry(Vol *v, uint32_t dir, uint32_t idx, uint8_t ent[32]) {
+    uint32_t first = get16(ent + 26);
+    if (ent[11] & 0x10) {
+        for (uint32_t i = 0; first >= 2; i++) {
+            uint8_t e[32];
+            if (!dir_entry(v, first, i, e, 0, 0) || e[0] == 0) break;
+            if (e[0] == 0xE5 || e[11] == 0x0F || (e[11] & 0x08) || e[0] == '.') continue;
+            del_entry(v, first, i, e);
+        }
+    }
+    free_chain(v, first);
+    ent[0] = 0xE5; dir_entry(v, dir, idx, ent, 1, 0);
+    for (int i = (int)idx - 1; i >= 0; i--) {
+        uint8_t e2[32];
+        if (!dir_entry(v, dir, (uint32_t)i, e2, 0, 0) || e2[11] != 0x0F || e2[0] == 0xE5) break;
+        e2[0] = 0xE5; dir_entry(v, dir, (uint32_t)i, e2, 1, 0);
+    }
+}
+
+/* Delete a file, or a folder with everything in it. Returns 1 if it existed and was removed. */
+int fat_delete(int fd, const char *path) {
+    Vol v;
+    if (!vol_open(&v, fd)) return 0;
+    char p[1024];
+    snprintf(p, sizeof p, "%s", path);
+    size_t n = strlen(p);
+    while (n && (p[n - 1] == '/' || p[n - 1] == '\\')) p[--n] = 0;
+    const char *leaf;
+    long dir = walk(&v, p, &leaf, 0);
+    int ok = 0;
+    if (dir >= 0 && *leaf) {
+        uint8_t ent[32];
+        int idx = dir_find(&v, (uint32_t)dir, leaf, ent);
+        if (idx >= 0) { del_entry(&v, (uint32_t)dir, (uint32_t)idx, ent); ok = 1; }
+    }
+    return vol_close(&v, 1) && ok;
+}
+
 int fat_mkdir(int fd, const char *path) {
     Vol v;
     if (!vol_open(&v, fd)) return 0;

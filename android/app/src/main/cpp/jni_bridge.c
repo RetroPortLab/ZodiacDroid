@@ -395,6 +395,18 @@ JNIEXPORT jboolean JNICALL FN(cardPut)(JNIEnv *env, jclass c, jstring card, jstr
     return ok ? JNI_TRUE : JNI_FALSE;
 }
 
+/* Remove a file or folder (with its contents) from the SD card image (the emulator must be stopped). */
+JNIEXPORT jboolean JNICALL FN(cardDelete)(JNIEnv *env, jclass c, jstring card, jstring path) {
+    (void)c;
+    char cp[1024], pp[1024];
+    jstr(env, card, cp, sizeof cp); jstr(env, path, pp, sizeof pp);
+    int fd = card_open_rw(cp);
+    if (fd < 0) return JNI_FALSE;
+    int ok = fat_delete(fd, pp);
+    fsync(fd); close(fd);
+    return ok ? JNI_TRUE : JNI_FALSE;
+}
+
 /* "name\tsize\tisdir" lines for a folder of the card image ("" = root) */
 JNIEXPORT jstring JNICALL FN(cardList)(JNIEnv *env, jclass c, jstring card, jstring path) {
     (void)c;
