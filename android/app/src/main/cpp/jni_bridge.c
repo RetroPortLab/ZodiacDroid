@@ -429,6 +429,7 @@ JNIEXPORT jstring JNICALL FN(cardList)(JNIEnv *env, jclass c, jstring card, jstr
 }
 
 JNIEXPORT void JNICALL FN(setPaused)(JNIEnv *env, jclass c, jboolean p) { (void)env; (void)c; paused = p; }
+JNIEXPORT jboolean JNICALL FN(getVibrate)(JNIEnv *env, jclass c) { (void)env; (void)c; return zod_vibrate ? JNI_TRUE : JNI_FALSE; }
 JNIEXPORT void JNICALL FN(setFilter)(JNIEnv *env, jclass c, jint f) { (void)env; (void)c; filter = f; }
 JNIEXPORT jfloat JNICALL FN(getFps)(JNIEnv *env, jclass c) { (void)env; (void)c; return fps; }
 JNIEXPORT void JNICALL FN(setJit)(JNIEnv *env, jclass c, jboolean on) { (void)env; (void)c; jit_setting = on; }

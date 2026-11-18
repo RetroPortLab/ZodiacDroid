@@ -104,7 +104,13 @@ static void display_blit(void) {
     cpu.r[15] = 0x2009A614u;                    /* the function's normal "success" return */
 }
 
+/* The vibration motor: the OS's "vibrator0" driver switches it through one routine, r0 = on/off.
+ * Record the state for the front end and let the OS carry on. */
+volatile int zod_vibrate;
+static void vibrator_set(void) { zod_vibrate = cpu.r[0] != 0; }
+
 static const Patch patches[] = {
+    { 0x200B5BF0, 0xE92D4278, vibrator_set, "vibration motor on/off" },
     { 0x2009A63C, 0xE3810009, display_blit, "display blit (queued copy never completed)" },
     { 0x200A4524, 0xE19A0000, sig_ok, "database signature check" },
     { 0x200A3FA8, 0xE92D4FFF, sig_accept_all, "application signature check (allow unsigned software)" },

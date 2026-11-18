@@ -69,6 +69,29 @@ public class MainActivity extends Activity {
     private int keyMask = 0, axisButtons = 0;
     private View pauseMenu = null;
     private TextView fpsView;
+    private android.os.Vibrator vibrator;
+    private boolean vibrating = false;
+    /* Follows the Zodiac's vibration motor: on while the OS has it switched on. */
+    private final Runnable vibTick = new Runnable() {
+        @Override public void run() {
+            if (screen != SCREEN_GAME) { stopVibe(); return; }
+            boolean want = prefs.getBoolean("vibration", true) && !menuOpen && NativeLib.getVibrate();
+            if (want != vibrating) {
+                if (vibrator == null) vibrator = (android.os.Vibrator) getSystemService(VIBRATOR_SERVICE);
+                if (vibrator != null && vibrator.hasVibrator()) {
+                    if (want) vibrator.vibrate(android.os.VibrationEffect.createOneShot(5000, android.os.VibrationEffect.DEFAULT_AMPLITUDE));
+                    else vibrator.cancel();
+                }
+                vibrating = want;
+            }
+            ui.postDelayed(this, 30);
+        }
+    };
+    private void stopVibe() {
+        ui.removeCallbacks(vibTick);
+        if (vibrating && vibrator != null) vibrator.cancel();
+        vibrating = false;
+    }
     private final Runnable fpsTick = new Runnable() {
         @Override public void run() {
             if (fpsView == null || screen != SCREEN_GAME) return;
@@ -325,6 +348,14 @@ public class MainActivity extends Activity {
             setRowValue(filter, FILTERS[f]);
         });
         list.addView(filter);
+        LinearLayout vib = row("Vibration", "Rumble when the game or Palm OS vibrates",
+                prefs.getBoolean("vibration", true) ? "On" : "Off", null);
+        vib.setOnClickListener(v -> {
+            boolean on = !prefs.getBoolean("vibration", true);
+            prefs.edit().putBoolean("vibration", on).apply();
+            setRowValue(vib, on ? "On" : "Off");
+        });
+        list.addView(vib);
         LinearLayout stretch = row("Fill the screen", "Stretch to the full display instead of keeping 3:2",
                 prefs.getBoolean("stretch", false) ? "On" : "Off", null);
         stretch.setOnClickListener(v -> {
@@ -984,6 +1015,8 @@ public class MainActivity extends Activity {
         menuOpen = false; pauseMenu = null;
         fpsView = null;
         ui.removeCallbacks(fpsTick);
+        ui.removeCallbacks(vibTick);
+        ui.post(vibTick);
         if (prefs.getBoolean("showFps", false)) {
             fpsView = text("-- FPS", 14, 0xFFFFE066, true);
             fpsView.setBackgroundColor(0x80000000);

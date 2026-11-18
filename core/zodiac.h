@@ -55,6 +55,7 @@ void sd_attach(int fd, uint64_t size);
 /* audio: interleaved stereo 16-bit frames at zod_audio_rate Hz; returns frames copied */
 int  zod_audio_read(int16_t *out, int n);     /* raw: whatever is queued */
 int  zod_audio_stream(int16_t *out, int n);   /* for the audio device: always n frames, jitter-buffered */
+extern volatile int zod_vibrate;   /* 1 while the OS has the vibration motor switched on */
 extern uint32_t audio_rate;
 /* save states (zlib-compressed); zod_save_state returns a malloc'd buffer */
 size_t zod_save_state(uint8_t **out);
