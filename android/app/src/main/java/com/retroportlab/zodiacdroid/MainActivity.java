@@ -72,7 +72,7 @@ public class MainActivity extends Activity {
     private final Runnable fpsTick = new Runnable() {
         @Override public void run() {
             if (fpsView == null || screen != SCREEN_GAME) return;
-            fpsView.setText(String.format(Locale.US, "%.0f FPS", NativeLib.getFps()));
+            fpsView.setText(String.format(Locale.US, "%.0f FPS  %d MHz", NativeLib.getFps(), NativeLib.getClock()));
             ui.postDelayed(this, 500);
         }
     };
@@ -290,7 +290,7 @@ public class MainActivity extends Activity {
         list.addView(row("What's on the card", cardSummary(), null, v -> showCard()));
 
         list.addView(sectionTitle("Controls"));
-        TextView help = text("Left stick or D-pad: analog controller   ·   A B X Y: action buttons   ·   L1 R1: triggers\n"
+        TextView help = text("Left stick or D-pad: analog controller   ·   A: select   B: back   X Y: other action buttons   ·   L1 R1: triggers\n"
                 + "Start: Function   ·   Select: Home   ·   Touch the screen to use the stylus\n"
                 + "Select + Start (or Back): pause menu", 13, SUBTEXT, false);
         help.setPadding(dp(4), 0, dp(4), dp(8));
@@ -340,6 +340,18 @@ public class MainActivity extends Activity {
         });
         list.addView(fps);
 
+        list.addView(sectionTitle("Performance"));
+        LinearLayout clock = row("CPU clock", "The Zodiac runs at 200 MHz. Auto lowers it when your device can't keep up, "
+                + "so games stay at full speed with fewer frames", clockName(clockSetting()), null);
+        clock.setOnClickListener(v -> {
+            int i = 0;
+            for (int k = 0; k < CLOCKS.length; k++) if (CLOCKS[k] == clockSetting()) i = k;
+            int c = CLOCKS[(i + 1) % CLOCKS.length];
+            prefs.edit().putInt("clock", c).apply();
+            setRowValue(clock, clockName(c));
+        });
+        list.addView(clock);
+
         list.addView(sectionTitle("Updates"));
         LinearLayout auto = row("Check automatically", "Looks on GitHub for a new version at most twice a day",
                 prefs.getBoolean("autoUpdate", true) ? "On" : "Off", null);
@@ -361,6 +373,10 @@ public class MainActivity extends Activity {
         list.addView(about);
         rom.requestFocus();
     }
+
+    private static final int[] CLOCKS = {0, 200, 166, 133, 100};
+    private static String clockName(int mhz) { return mhz == 0 ? "Auto" : mhz + " MHz"; }
+    private int clockSetting() { return prefs.getInt("clock", 0); }
 
     private int filterMode() { return Math.max(0, Math.min(FILTERS.length - 1, prefs.getInt("filter", 2))); }
 
@@ -916,6 +932,7 @@ public class MainActivity extends Activity {
             ui.postDelayed(fpsTick, 500);
         }
         NativeLib.setFilter(filterMode());
+        NativeLib.setClock(clockSetting());
         NativeLib.setButtons(0);
         NativeLib.setStick(0, 0);
         NativeLib.start();

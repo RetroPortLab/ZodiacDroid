@@ -39,7 +39,8 @@ extern Zodiac zod;
 /* load a ROM: raw 8MB image, or the Tapwave "zodiac_1.1_update.prc" (gzipped ROMZ resource). */
 int  zod_load_rom(const uint8_t *data, size_t len, char *err, size_t errlen);
 void zod_reset(void);
-void zod_soft_reset(void);           /* reset button: keeps the RAM (installed apps, data) */
+void zod_soft_reset(void);
+void zod_set_cpu_mhz(int mhz);        /* 50..200; the Zodiac runs at 200 */           /* reset button: keeps the RAM (installed apps, data) */
 void zod_run_frame(void);            /* one 1/60s slice */
 void zod_touch(int x, int y, int down);   /* screen coordinates 0..479 x 0..319 */
 /* buttons (active while the bit is set) */

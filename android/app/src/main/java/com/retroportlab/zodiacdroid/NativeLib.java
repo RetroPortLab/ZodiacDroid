@@ -17,6 +17,8 @@ final class NativeLib {
     static native void setPaused(boolean p);
     static native void setFilter(int mode);
     static native float getFps();
+    static native void setClock(int mhz);      // 0 = auto
+    static native int getClock();
 
     static native void setTouch(int x, int y, boolean down);   // 480x320 screen coordinates
     static native void setStick(int x, int y);                  // -32767..32767

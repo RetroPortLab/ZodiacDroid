@@ -96,6 +96,7 @@ int main(int argc, char **argv) {
         if (!sd || !zod_load_state(sd, sl)) { fprintf(stderr, "cannot load state %s\n", loadp); return 1; }
         free(sd);
     }
+    if (getenv("MHZ")) zod_set_cpu_mhz(atoi(getenv("MHZ")));
     { extern int sd_log; sd_log = getenv("SDLOG") != NULL; }
     if (cardp) {
         int fd = open(cardp, O_RDWR);

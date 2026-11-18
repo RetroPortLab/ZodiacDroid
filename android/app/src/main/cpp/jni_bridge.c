@@ -27,6 +27,8 @@ static ANativeWindow *window;
 static int win_w, win_h;
 static pthread_t thread;
 static volatile int running, paused, filter;
+static volatile int clock_setting;      /* 0 = auto, else MHz */
+static int cur_mhz = 200;
 static volatile float fps;
 static char last_error[256];
 static char autosave_path[1024];
@@ -218,6 +220,20 @@ static void *run(void *arg) {
 
         fps_frames++;
         int64_t t = now_ns();
+        /* Auto clock: when the host can't keep up, slow the emulated CPU so game time stays real
+         * time (games then draw fewer frames); speed back up when there's room again. */
+        {
+            static int behind, ahead;
+            int want = clock_setting;
+            if (!want) {
+                int64_t lag = t - (next + frame_ns);
+                if (lag > frame_ns / 2) { ahead = 0; if (++behind >= 30 && cur_mhz > 80) { cur_mhz = cur_mhz * 9 / 10; behind = 0; } }
+                else if (lag < -frame_ns / 3) { behind = 0; if (++ahead >= 120 && cur_mhz < 200) { cur_mhz += 10; if (cur_mhz > 200) cur_mhz = 200; ahead = 0; } }
+                else { behind = ahead = 0; }
+                want = cur_mhz;
+            }
+            if (want != (int)(zod.cpu_hz / 1000000u)) zod_set_cpu_mhz(want);
+        }
         if (t - fps_t0 >= 1000000000LL) { fps = fps_frames * 1e9f / (float)(t - fps_t0); fps_t0 = t; fps_frames = 0; }
         next += frame_ns;
         if (next > t) {
@@ -385,6 +401,8 @@ JNIEXPORT jstring JNICALL FN(cardList)(JNIEnv *env, jclass c, jstring card, jstr
 JNIEXPORT void JNICALL FN(setPaused)(JNIEnv *env, jclass c, jboolean p) { (void)env; (void)c; paused = p; }
 JNIEXPORT void JNICALL FN(setFilter)(JNIEnv *env, jclass c, jint f) { (void)env; (void)c; filter = f; }
 JNIEXPORT jfloat JNICALL FN(getFps)(JNIEnv *env, jclass c) { (void)env; (void)c; return fps; }
+JNIEXPORT void JNICALL FN(setClock)(JNIEnv *env, jclass c, jint mhz) { (void)env; (void)c; clock_setting = mhz; if (!mhz) cur_mhz = 200; }
+JNIEXPORT jint JNICALL FN(getClock)(JNIEnv *env, jclass c) { (void)env; (void)c; return (jint)(zod.cpu_hz / 1000000u); }
 
 JNIEXPORT void JNICALL FN(setTouch)(JNIEnv *env, jclass c, jint x, jint y, jboolean down) {
     (void)env; (void)c;
