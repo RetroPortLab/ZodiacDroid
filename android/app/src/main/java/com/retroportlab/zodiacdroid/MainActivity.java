@@ -356,6 +356,15 @@ public class MainActivity extends Activity {
             setRowValue(vib, on ? "On" : "Off");
         });
         list.addView(vib);
+        LinearLayout assist = row("Stick tap assist", "Holds quick stick taps long enough for menus to see them. Can make the stick overshoot in games",
+                prefs.getBoolean("stickAssist", false) ? "On" : "Off", null);
+        assist.setOnClickListener(v -> {
+            boolean on = !prefs.getBoolean("stickAssist", false);
+            prefs.edit().putBoolean("stickAssist", on).apply();
+            NativeLib.setStickAssist(on);
+            setRowValue(assist, on ? "On" : "Off");
+        });
+        list.addView(assist);
         LinearLayout stretch = row("Fill the screen", "Stretch to the full display instead of keeping 3:2",
                 prefs.getBoolean("stretch", false) ? "On" : "Off", null);
         stretch.setOnClickListener(v -> {
@@ -1024,6 +1033,7 @@ public class MainActivity extends Activity {
             root.addView(fpsView, new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.START));
             ui.postDelayed(fpsTick, 500);
         }
+        NativeLib.setStickAssist(prefs.getBoolean("stickAssist", false));
         NativeLib.setFilter(filterMode());
         NativeLib.setClock(clockSetting());
         NativeLib.setJit(prefs.getBoolean("jit", true));

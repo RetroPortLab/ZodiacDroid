@@ -124,6 +124,9 @@ static int stick_x, stick_y;          /* -32767..32767, right/down positive */
 static int eff_x, eff_y, eff_hold;    /* what the ADC reports: a deflection is kept for a minimum time */
 static unsigned adc_seq;
 
+static int stick_assist;              /* 1: keep a fresh tap alive ~20 frames so menus see it (overshoots in games) */
+void zod_stick_assist(int on) { stick_assist = on; }
+
 void zod_stick(int x, int y) {
     if (x < -32767) x = -32767;
     if (x > 32767) x = 32767;
@@ -132,7 +135,7 @@ void zod_stick(int x, int y) {
     stick_x = x; stick_y = y;
     int off = x > 9000 || x < -9000 || y > 9000 || y < -9000;
     static int was_off;
-    if (off) { if (!was_off) eff_hold = 20; eff_x = x; eff_y = y; }   /* a fresh press is kept ~20 frames so a short tap is sampled; later release is immediate */
+    if (off) { if (!was_off && stick_assist) eff_hold = 20; eff_x = x; eff_y = y; }   /* a fresh press is kept ~20 frames so a short tap is sampled; later release is immediate */
     was_off = off;
 }
 

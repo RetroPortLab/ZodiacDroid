@@ -18,6 +18,7 @@ final class NativeLib {
     static native void setPaused(boolean p);
     static native void setFilter(int mode);
     static native float getFps();
+    static native void setStickAssist(boolean on);
     static native boolean getVibrate();         // OS has the vibration motor on
     static native void setClock(int mhz);      // 0 = auto
     static native void setJit(boolean on);     // recompiler on/off
