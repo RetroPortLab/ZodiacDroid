@@ -5,6 +5,7 @@
  * expansion from host data, colour-key transparency and clipping, at 8/16 bpp. */
 #include "zodiac.h"
 #include "w4200.h"
+#include "cpu.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -253,7 +254,9 @@ static void host_data(uint32_t v) {
     } else host_pixel(v, 0);
 }
 
+int w2d_ops, w2d_break_at;
 static void trigger(int x, int y, int w, int h) {
+    if (++w2d_ops == w2d_break_at) { cpu.dbg_hit = 1; cpu_end_slice(); }
     if (zod.log_2d) fprintf(stderr, "[2D] op gmc=%08x rop=%02x src=%d dst=%08x/%u (%d,%d %dx%d) src=%08x/%u (%d,%d) fg=%08x\n",
                             GMC, GMC_ROP3, GMC_SRC_SOURCE, R(DST_OFFSET), R(DST_PITCH) & 0x3FFF, x, y, w, h,
                             R(SRC_OFFSET), R(SRC_PITCH) & 0x3FFF, (int)(R(SRC_Y_X) & 0xFFFF), (int)(R(SRC_Y_X) >> 16), R(DP_BRUSH_FRGD_CLR));

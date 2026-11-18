@@ -25,7 +25,14 @@ static void hook(uint32_t pc) {
         char s0[80], s1[80], s2[80];
         rdstr(cpu.r[0], s0, 80); rdstr(cpu.r[1], s1, 80); rdstr(cpu.r[2], s2, 80);
         if (getenv("TRACEHOOK") && hook_hits == atoi(getenv("TRACEHOOK"))) cpu.trace_n = 80;
-        if (hook_hits++ < 400)
+        if (hook_hits++ < (getenv("HOOKMAX") ? atoi(getenv("HOOKMAX")) : 400))
+        {
+            if (getenv("STACK") && hook_hits < (getenv("HOOKMAX") ? atoi(getenv("HOOKMAX")) : 400)) {
+                fprintf(stderr, "  stack:");
+                for (int k = 0; k < 64; k++) { uint32_t v; if (cpu_vread32(cpu.r[13] + k * 4, &v) && v >= 0x20000000 && v < 0x20800000) fprintf(stderr, " %08x", v); }
+                fprintf(stderr, "\n");
+            }
+        }
             fprintf(stderr, "HOOK %08x r0=%08x r1=%08x r2=%08x r3=%08x lr=%08x  \"%s\" \"%s\" \"%s\"\n", pc, cpu.r[0], cpu.r[1], cpu.r[2], cpu.r[3], cpu.r[14], s0, s1, s2);
     }
 }
@@ -71,6 +78,7 @@ int main(int argc, char **argv) {
             if (*p == ',') p++; else break;
         }
     }
+    { extern int w2d_break_at; if (getenv("BRK2D")) w2d_break_at = atoi(getenv("BRK2D")); }
     if (getenv("BRK")) { sscanf(getenv("BRK"), "%x-%x", &cpu.dbg_lo, &cpu.dbg_hi); if (getenv("BRKSKIP")) cpu.dbg_skip = atoi(getenv("BRKSKIP")); }
     for (int f = 0; f < frames && !cpu.dbg_hit; f++) zod_run_frame();
     if (cpu.dbg_hit) fprintf(stderr, "BREAK at %08x\n", cpu.r[15]);
@@ -87,6 +95,9 @@ int main(int argc, char **argv) {
     if (getenv("RING")) { int n = atoi(getenv("RING")); for (int i = n; i > 0; i--) fprintf(stderr, "%08x\n", cpu.ring[(cpu.ring_pos - i) & 65535]); }
     if (getenv("IOREGS")) { uint32_t a, b; sscanf(getenv("IOREGS"), "%x-%x", &a, &b);
         for (uint32_t r = a; r < b; r += 4) fprintf(stderr, "%08x: %08x%s", r, zod.io[(r - IO_BASE) >> 2], ((r - a) & 0xC) == 0xC ? "\n" : "  "); }
+    { extern int w2d_ops; fprintf(stderr, "2D ops: %d\n", w2d_ops); }
+    if (getenv("IRQS")) fprintf(stderr, "INTENABLE H=%08x L=%08x  INTSRC H=%08x L=%08x  FIQ type H=%08x L=%08x\n",
+        io_read(0x223010, 4), io_read(0x223014, 4), io_read(0x223048, 4), io_read(0x22304c, 4), io_read(0x223018, 4), io_read(0x22301c, 4));
     if (getenv("W42REGS")) { uint32_t a, b; sscanf(getenv("W42REGS"), "%x-%x", &a, &b);
         for (uint32_t r = a; r < b; r += 4) fprintf(stderr, "%04x: %08x%s", r, w42.reg[r >> 2], ((r - a) & 0xC) == 0xC ? "\n" : "  "); }
     if (getenv("W42MEM")) { FILE *f = fopen(getenv("W42MEM"), "wb"); fwrite(w42.imem, 1, W42_IMEM_SIZE, f); fwrite(w42.emem, 1, W42_EMEM_SIZE, f); fclose(f); }

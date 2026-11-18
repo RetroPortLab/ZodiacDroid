@@ -892,8 +892,7 @@ int cpu_run(int cycles) {
         }
         if (cpu.halted) { cpu.budget = 0; break; }   /* idle: the rest of the slice passes */
         uint32_t pc = cpu.r[15], insn;
-        if (pc - cpu.dbg_lo < cpu.dbg_hi - cpu.dbg_lo && (pc != cpu.ring[(cpu.ring_pos - 1) & 65535])) { if (cpu.dbg_skip > 0) cpu.dbg_skip--; else { cpu.dbg_hit = 1; break; } }
-        cpu.ring[cpu.ring_pos++ & 65535] = pc | ((cpu.cpsr >> 5) & 1);
+        if (pc - cpu.dbg_lo < cpu.dbg_hi - cpu.dbg_lo) { if (cpu.dbg_skip > 0) cpu.dbg_skip--; else { cpu.dbg_hit = 1; break; } }
         branched = 0;
         cpu.abort = 0;
         if (cpu.hle_bitmap && pc >= 0x20000000u && pc < 0x40000000u) {
@@ -909,6 +908,7 @@ int cpu_run(int cycles) {
             thumb_step(pc, insn);
             if (cpu.abort) { take_exception(0x10, M_ABT, pc + 8, 0); cpu.budget -= 1; continue; }
             if (!branched) cpu.r[15] = pc + 2;
+            else if (cpu.r[15] != pc) { cpu.ring[cpu.ring_pos++ & 65535] = pc | 1; cpu.ring[cpu.ring_pos++ & 65535] = cpu.r[15] | ((cpu.cpsr >> 5) & 1); }
         } else {
             if (pc - pf_lo < pf_hi - pf_lo) {
                 uint32_t keep = cpu.ctrl, pa = pc; cpu.ctrl = pf_ctrl;
@@ -923,6 +923,7 @@ int cpu_run(int cycles) {
             }
             if (cpu.abort) { take_exception(0x10, M_ABT, pc + 8, 0); cpu.budget -= 1; continue; }
             if (!branched) cpu.r[15] = pc + 4;
+            else if (cpu.r[15] != pc) { cpu.ring[cpu.ring_pos++ & 65535] = pc; cpu.ring[cpu.ring_pos++ & 65535] = cpu.r[15] | ((cpu.cpsr >> 5) & 1); }
         }
         cpu.budget -= 1;
     }

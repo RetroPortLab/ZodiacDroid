@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <stdlib.h>
 
 #define IOREG(off) zod.io[(off) >> 2]
 
@@ -406,6 +407,8 @@ void io_init(void) {
     memset(gpio_isr, 0, sizeof gpio_isr);
     for (int i = 0; i < 4; i++) gpio_in[i] = 0xFFFFFFFF;
     if (zod.model == 2) gpio_in[3] &= ~0x40;   /* PD6 low = Zodiac 2 (two SDRAM banks) */
+    gpio_in[1] &= ~(1u << 14);                 /* PB14 low = external power present (no battery measurement is emulated) */
+    if (getenv("GPIOLOW")) { int port, pin; const char *s = getenv("GPIOLOW"); while (sscanf(s, "%d.%d", &port, &pin) == 2) { gpio_in[port] &= ~(1u << pin); s = strchr(s, ','); if (!s) break; s++; } }
     IOREG(0x1B000) = 0x2F00AC03;    /* CSCR reset value */
     IOREG(0x1B020) = 0x00000051;    /* PCDR */
     IOREG(0x01008) = 0x00000000;    /* WSTR: no watchdog time-out (a set TOUT bit makes Palm OS treat the boot as a crash) */

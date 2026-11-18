@@ -22,7 +22,22 @@ static void eeprom_sig_ok(void) { cpu.r[0] = 0; cpu.r[15] += 4; }
  * Make the stub return 0 instead (Thumb: return to lr). */
 static void pins_stub(void) { cpu.r[0] = 0; cpu.r[15] = cpu.r[14] & ~1u; if (!(cpu.r[14] & 1)) cpu.cpsr &= ~0x20u; }
 
+/* HALDelay(us): the DAL busy-waits on GPT1 (1MHz free-running). Instead of spinning
+ * through millions of instructions, account the same amount of CPU time and return. */
+static void hal_delay(void) {
+    uint32_t us = cpu.r[0] ? cpu.r[0] : 1;
+    cpu.budget -= (int64_t)us * (zod.cpu_hz / 1000000);
+    cpu.r[15] = cpu.r[14] & ~1u; if (!(cpu.r[14] & 1)) cpu.cpsr &= ~0x20u;
+}
+
+/* Database signature check (DAL "Signature Check"): Tapwave signs its system extensions
+ * ("Tapwave Application Layer" etc). Verification currently fails under emulation, and
+ * UIAppShell then retries forever without loading them. Report success. */
+static void sig_ok(void) { cpu.r[0] = 0; cpu.r[10] = 0; }   /* continue at the orrs: result 0 = verified */
+
 static const Patch patches[] = {
+    { 0x200A4524, 0xE19A0000, sig_ok, "database signature check" },
+    { 0x20084912, 0x2800491D, hal_delay, "HALDelay" },
     { 0x204B2BEC, 0xA210B580, pins_stub, "Pen Input Manager stub (UI)" },
     { 0x20055E28, 0xA2A6B580, pins_stub, "Pen Input Manager stub (system)" },
     { 0x200A3CCC, 0xEB0097B7, eeprom_sig_ok, "EEPROM signature check" },
@@ -52,7 +67,8 @@ void patches_install(void (*debug_hook)(uint32_t)) {
     for (unsigned i = 0; i < NPATCH; i++) {
         uint32_t off = patches[i].va - 0x20000000u;   /* ROM is linked at 0x20000000 */
         if (off + 4 > zod.rom_size) continue;
-        uint32_t w = *(uint32_t *)(zod.flash + off);
+        uint32_t w = (off & 2) ? (uint32_t)*(uint16_t *)(zod.flash + off) | ((uint32_t)*(uint16_t *)(zod.flash + off + 2) << 16)
+                               : *(uint32_t *)(zod.flash + off);
         if (w != patches[i].expect) {
             fprintf(stderr, "patch '%s' not applied: ROM differs\n", patches[i].what);
             continue;
