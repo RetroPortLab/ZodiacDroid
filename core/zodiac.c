@@ -111,6 +111,14 @@ void zod_reset(void) {
     patches_install(NULL);
 }
 
+/* Like pressing the reset button: the storage heap in SDRAM survives. */
+void zod_soft_reset(void) {
+    zod.cycles = 0;
+    io_init();
+    cpu_reset();
+    patches_install(NULL);
+}
+
 void zod_run_frame(void) {
     int slice = 2000;
     int total = zod.cpu_hz / 60;

@@ -18,3 +18,4 @@ android/app/build/
 android/app/.cxx/
 android/build/
 *.jks
+*.zst

@@ -1,0 +1,29 @@
+# Publishes a GitHub release whenever a new signed APK is committed to dist/
+# on main (dist/ZodiacDroid-v0.2.apk -> release and tag v0.2, with notes from
+# dist/notes-v0.2.md). The APK is built and signed before it is committed, so
+# the signing key never has to leave the machine that builds releases.
+# Releases that already exist are left alone.
+name: Release
+on:
+  push:
+    branches: [main]
+    paths: ['dist/**']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish new releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for apk in $(ls dist/ZodiacDroid-v*.apk | sort -V); do
+            tag=$(basename "$apk" .apk); tag=${tag#ZodiacDroid-}
+            if gh release view "$tag" >/dev/null 2>&1; then echo "$tag already released"; continue; fi
+            notes="dist/notes-$tag.md"
+            [ -f "$notes" ] || echo "ZodiacDroid $tag" > "$notes"
+            gh release create "$tag" "$apk" --target "$GITHUB_SHA" --title "ZodiacDroid $tag" --notes-file "$notes" --latest
+          done
