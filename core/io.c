@@ -408,7 +408,7 @@ void io_init(void) {
     if (zod.model == 2) gpio_in[3] &= ~0x40;   /* PD6 low = Zodiac 2 (two SDRAM banks) */
     IOREG(0x1B000) = 0x2F00AC03;    /* CSCR reset value */
     IOREG(0x1B020) = 0x00000051;    /* PCDR */
-    IOREG(0x01008) = 0x00000001;    /* WSTR: power-on reset */
+    IOREG(0x01008) = 0x00000000;    /* WSTR: no watchdog time-out (a set TOUT bit makes Palm OS treat the boot as a crash) */
     soc_init();
     ext_init();
     aitc_update();

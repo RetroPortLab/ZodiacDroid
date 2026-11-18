@@ -71,7 +71,7 @@ int main(int argc, char **argv) {
             if (*p == ',') p++; else break;
         }
     }
-    if (getenv("BRK")) { sscanf(getenv("BRK"), "%x-%x", &cpu.dbg_lo, &cpu.dbg_hi); }
+    if (getenv("BRK")) { sscanf(getenv("BRK"), "%x-%x", &cpu.dbg_lo, &cpu.dbg_hi); if (getenv("BRKSKIP")) cpu.dbg_skip = atoi(getenv("BRKSKIP")); }
     for (int f = 0; f < frames && !cpu.dbg_hit; f++) zod_run_frame();
     if (cpu.dbg_hit) fprintf(stderr, "BREAK at %08x\n", cpu.r[15]);
     fprintf(stderr, "pc=%08x cpsr=%08x cycles=%llu halted=%d\n", cpu.r[15], cpu_get_cpsr(), (unsigned long long)cpu.cycles, cpu.halted);

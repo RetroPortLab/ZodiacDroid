@@ -40,7 +40,7 @@ typedef struct {
     uint8_t *hle_bitmap;               /* 1 bit per halfword over the first 512MB, or NULL */
     void (*undef_hook)(uint32_t pc, uint32_t insn, int thumb); /* optional: called on undefined instructions */
     uint32_t trace_n;
-    uint32_t dbg_lo, dbg_hi; int dbg_hit;      /* stop when pc enters [lo,hi) */
+    uint32_t dbg_lo, dbg_hi; int dbg_hit, dbg_skip;      /* stop when pc enters [lo,hi) */
     uint32_t ring[65536]; uint32_t ring_pos;   /* last executed PCs (bit0 = thumb) */                  /* print this many instructions */
 } Cpu;
 

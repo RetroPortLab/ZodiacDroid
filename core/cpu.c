@@ -892,7 +892,7 @@ int cpu_run(int cycles) {
         }
         if (cpu.halted) { cpu.budget = 0; break; }   /* idle: the rest of the slice passes */
         uint32_t pc = cpu.r[15], insn;
-        if (pc - cpu.dbg_lo < cpu.dbg_hi - cpu.dbg_lo) { cpu.dbg_hit = 1; break; }
+        if (pc - cpu.dbg_lo < cpu.dbg_hi - cpu.dbg_lo && (pc != cpu.ring[(cpu.ring_pos - 1) & 65535])) { if (cpu.dbg_skip > 0) cpu.dbg_skip--; else { cpu.dbg_hit = 1; break; } }
         cpu.ring[cpu.ring_pos++ & 65535] = pc | ((cpu.cpsr >> 5) & 1);
         branched = 0;
         cpu.abort = 0;

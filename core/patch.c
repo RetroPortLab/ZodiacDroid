@@ -18,7 +18,13 @@ typedef struct {
  * We have no per-device EEPROM, so report the comparison as equal. */
 static void eeprom_sig_ok(void) { cpu.r[0] = 0; cpu.r[15] += 4; }
 
+/* The ROM's Pen Input Manager is a stub that raises "PINUIDummy.c, Line:25, Unimplemented".
+ * Make the stub return 0 instead (Thumb: return to lr). */
+static void pins_stub(void) { cpu.r[0] = 0; cpu.r[15] = cpu.r[14] & ~1u; if (!(cpu.r[14] & 1)) cpu.cpsr &= ~0x20u; }
+
 static const Patch patches[] = {
+    { 0x204B2BEC, 0xA210B580, pins_stub, "Pen Input Manager stub (UI)" },
+    { 0x20055E28, 0xA2A6B580, pins_stub, "Pen Input Manager stub (system)" },
     { 0x200A3CCC, 0xEB0097B7, eeprom_sig_ok, "EEPROM signature check" },
 };
 #define NPATCH (sizeof patches / sizeof patches[0])
