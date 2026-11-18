@@ -131,4 +131,5 @@ void zod_run_frame(void) {
         if (cpu.dbg_hit) break;
     }
     w4200_scanout();
+    w4200_vblank();
 }

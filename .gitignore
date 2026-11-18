@@ -19,3 +19,4 @@ android/app/.cxx/
 android/build/
 *.jks
 *.zst
+desktop/mkcard

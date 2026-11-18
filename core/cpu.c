@@ -894,7 +894,7 @@ int cpu_run(int cycles) {
         }
         if (cpu.halted) { cpu.budget = 0; break; }   /* idle: the rest of the slice passes */
         uint32_t pc = cpu.r[15], insn;
-        if (pc - cpu.dbg_lo < cpu.dbg_hi - cpu.dbg_lo) { if (cpu.dbg_skip > 0) cpu.dbg_skip--; else { cpu.dbg_hit = 1; break; } }
+        if (pc - cpu.dbg_lo < cpu.dbg_hi - cpu.dbg_lo && (!cpu.dbg_sp_hi || cpu.r[13] - cpu.dbg_sp_lo < cpu.dbg_sp_hi - cpu.dbg_sp_lo)) { if (cpu.dbg_skip > 0) cpu.dbg_skip--; else { cpu.dbg_hit = 1; break; } }
         branched = 0;
         cpu.abort = 0;
         if (cpu.hle_bitmap && pc >= 0x20000000u && pc < 0x40000000u) {

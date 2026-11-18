@@ -22,6 +22,7 @@ void     w4200_reg_write(uint32_t r, uint32_t v);
 uint8_t *w4200_page(uint32_t pa);
 uint8_t *w42_ptr(uint32_t chip_addr);
 void     w4200_scanout(void);
+void     w4200_vblank(void);
 
 /* w2d.c: 2D engine */
 void     w2d_init(void);

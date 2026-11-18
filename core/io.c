@@ -223,6 +223,12 @@ static void rtc_sync(void) {
         if (s0 / 60 != s1 / 60) rtc_isr |= 0x02;
         if (s0 / 3600 != s1 / 3600) rtc_isr |= 0x20;
         if (s0 / 86400 != s1 / 86400) rtc_isr |= 0x08;
+        {   /* alarm: DAYALARM:ALRM_HM:ALRM_SEC (Palm OS uses it for procedure alarms and timed events) */
+            uint32_t hm = IOREG(RTC + 0x08), sec = IOREG(RTC + 0x0C), day = IOREG(RTC + 0x24);
+            uint64_t at = (uint64_t)(day & 0x1FF) * 86400 + ((hm >> 8) & 31) * 3600 + (hm & 63) * 60 + (sec & 63);
+            uint64_t d0 = s0 % (512ull * 86400), d1 = s1 % (512ull * 86400);
+            if (d1 >= d0 ? (at > d0 && at <= d1) : (at > d0 || at <= d1)) rtc_isr |= 0x04;
+        }
         for (int k = 0; k < 8; k++) {                                                /* SAM0 4Hz .. SAM7 512Hz */
             uint64_t hz = 4u << k;
             if (a * hz / 1000 != b * hz / 1000) rtc_isr |= 0x100u << k;
@@ -344,7 +350,7 @@ static uint32_t io_read32(uint32_t off) {
         break;
     case 0x23000: return aitc_read(r);
     default:
-        if (blk >= 0x10000 && blk < 0x30000) { uint32_t v; if (soc_read(off, &v)) return v; }
+        if ((blk >= 0x10000 && blk < 0x30000) || blk == 0x09000) { uint32_t v; if (soc_read(off, &v)) return v; }
         break;
     }
     return IOREG(off);

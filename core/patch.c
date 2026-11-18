@@ -35,12 +35,18 @@ static void hal_delay(void) {
  * UIAppShell then retries forever without loading them. Report success. */
 static void sig_ok(void) { cpu.r[0] = 0; cpu.r[10] = 0; }   /* continue at the orrs: result 0 = verified */
 
+/* Battery level: the DAL samples the battery through a gauge we don't emulate, then
+ * scales it by factory calibration data. Report a full battery (the result is clamped
+ * to 50..950 by the DAL itself). */
+static void battery_level(void) { cpu.r[0] = 900; cpu.r[15] = cpu.r[14] & ~1u; if (!(cpu.r[14] & 1)) cpu.cpsr &= ~0x20u; }
+
 static const Patch patches[] = {
     { 0x200A4524, 0xE19A0000, sig_ok, "database signature check" },
     { 0x20084912, 0x2800491D, hal_delay, "HALDelay" },
     { 0x204B2BEC, 0xA210B580, pins_stub, "Pen Input Manager stub (UI)" },
     { 0x20055E28, 0xA2A6B580, pins_stub, "Pen Input Manager stub (system)" },
     { 0x200A3CCC, 0xEB0097B7, eeprom_sig_ok, "EEPROM signature check" },
+    { 0x20088658, 0xAB00B5FE, battery_level, "battery level" },
 };
 #define NPATCH (sizeof patches / sizeof patches[0])
 
@@ -84,7 +90,9 @@ static void apply_byte_patches(void) {
         int hits = 0;
         for (uint32_t o = 0; o + n <= zod.rom_size; o += 2)
             if (zod.flash[o] == f[0] && !memcmp(zod.flash + o, f, n)) { memcpy(zod.flash + o, r, n); hits++; }
-        if (!hits) fprintf(stderr, "patch '%s' not applied: ROM differs\n", byte_patches[i].what);
+        int already = 0;
+        for (uint32_t o = 0; !hits && o + n <= zod.rom_size; o += 2) if (!memcmp(zod.flash + o, r, n)) { already = 1; break; }
+        if (!hits && !already) fprintf(stderr, "patch '%s' not applied: ROM differs\n", byte_patches[i].what);
     }
 }
 

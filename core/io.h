@@ -20,3 +20,6 @@ void     ext_init(void);
 uint32_t ext_read(uint32_t pa, int size);
 void     ext_write(uint32_t pa, uint32_t v, int size);
 void     ext_tick(int cycles);
+/* sd.c: SD host controller, card and DMA */
+int  sd_read(uint32_t off, uint32_t *v);
+void sd_write(uint32_t off, uint32_t v, uint32_t old);

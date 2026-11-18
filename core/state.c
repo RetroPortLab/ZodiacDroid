@@ -9,7 +9,7 @@
 #include <zlib.h>
 
 #define STATE_MAGIC   0x53444F5Au   /* "ZODS" */
-#define STATE_VERSION 1
+#define STATE_VERSION 3
 
 void st_bytes(StateIO *s, void *p, size_t n) {
     if (s->err) return;
@@ -46,7 +46,7 @@ static void sparse(StateIO *s, uint8_t *mem, size_t size) {
     free(map);
 }
 
-static void machine(StateIO *s) {
+static void machine(StateIO *s, uint32_t version) {
     ST(s, zod.model);
     ST(s, zod.cycles);
     st_bytes(s, zod.io, sizeof zod.io);
@@ -58,13 +58,15 @@ static void machine(StateIO *s) {
     ext_state(s);
     w4200_state(s);
     w2d_state(s);
+    if (version >= 2) sd_state(s, version);
+    else if (s->loading) zod.io[0x09004 >> 2] = 0;   /* v1 kept DMA DISR as a plain register */
 }
 
 size_t zod_save_state(uint8_t **out) {
     StateIO s = { 0 };
     uint32_t tag = 0x4D454D53;   /* raw chunk start marker */
     ST(&s, tag);
-    machine(&s);
+    machine(&s, STATE_VERSION);
     if (s.err) { free(s.buf); return 0; }
     uLongf clen = compressBound(s.pos);
     uint8_t *o = malloc(clen + 16);
@@ -81,7 +83,7 @@ int zod_load_state(const uint8_t *data, size_t len) {
     uint32_t hdr[4];
     if (len < 16) return 0;
     memcpy(hdr, data, 16);
-    if (hdr[0] != STATE_MAGIC || hdr[1] != STATE_VERSION) return 0;
+    if (hdr[0] != STATE_MAGIC || hdr[1] < 1 || hdr[1] > STATE_VERSION) return 0;
     uLongf rlen = hdr[2];
     uint8_t *raw = malloc(rlen ? rlen : 1);
     if (!raw) return 0;
@@ -89,7 +91,7 @@ int zod_load_state(const uint8_t *data, size_t len) {
     StateIO s = { .buf = raw, .len = rlen, .loading = 1 };
     uint32_t tag; ST(&s, tag);
     if (tag != 0x4D454D53) { free(raw); return 0; }
-    machine(&s);
+    machine(&s, hdr[1]);
     free(raw);
     if (s.err) return 0;
     cpu_tlb_flush();

@@ -19,3 +19,4 @@ void soc_state(StateIO *s);
 void ext_state(StateIO *s);
 void w4200_state(StateIO *s);
 void w2d_state(StateIO *s);
+void sd_state(StateIO *s, uint32_t version);

@@ -142,7 +142,12 @@ static uint32_t pen_raw(int v, int range, int axis) {
     return ((uint32_t)v << shift) & 0xFFFF;
 }
 
+/* Auxiliary measurement mode (ACNTLCR channel field 7): the DAL reads three 9-bit values,
+ * which feed its battery estimate. Report a healthy, charging battery. */
+static const uint16_t asp_aux[3] = { 0x1D0, 0x1D0, 0x1D0 };
+
 static uint32_t asp_sample(void) {
+    if (((IOREG(ASP + 0x10) >> 24) & 7) == 7) return (uint32_t)asp_aux[asp_pos++ % 3] << 7;
     unsigned k = asp_pos++ & 3;
     if (k == 0) return pen_down ? 0 : 0xFF80;               /* auto-zero reference (no contact: high) */
     if (k == 1) return pen_raw(pen_x, 480, 0);
@@ -162,6 +167,7 @@ void soc_init(void) {
 }
 
 int soc_read(uint32_t off, uint32_t *v) {
+    if (sd_read(off, v)) return 1;
     switch (off) {
     case I2C + 0x10: *v = i2c_read_dr(); return 1;
     case ASP + 0x00: *v = asp_sample(); return 1;
@@ -172,6 +178,7 @@ int soc_read(uint32_t off, uint32_t *v) {
 }
 
 void soc_write(uint32_t off, uint32_t v, uint32_t old) {
+    sd_write(off, v, old);
     switch (off) {
     case I2C + 0x08: i2c_write_cr(old, v); break;
     case I2C + 0x0C: /* only IAL/IIF are writable (write 0 to clear) */
@@ -185,7 +192,7 @@ void soc_write(uint32_t off, uint32_t v, uint32_t old) {
     }
 }
 
-void soc_tick(int cycles) { (void)cycles; }
+void soc_tick(int cycles) { extern void audio_tick(int); audio_tick(cycles); }
 
 void soc_state(StateIO *s) {
     ST(s, n_i2c_devs);

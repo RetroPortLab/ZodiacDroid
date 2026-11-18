@@ -1,3 +1,5 @@
+#include <fcntl.h>
+#include <unistd.h>
 /* ZodiacDroid headless test runner:
  *   runzod rom|update.prc [frames] [--io N] [--trace N] [--shot out.ppm] */
 #include "../core/io.h"
@@ -15,7 +17,7 @@ static uint8_t *slurp(const char *p, size_t *len) {
     fclose(f); return b;
 }
 
-static uint32_t hooks[64]; static int nhooks; static int hook_hits; static uint32_t rearm;
+static uint32_t hooks[2048]; static int nhooks; static int hook_hits; static uint32_t rearm;
 static void rdstr(uint32_t va, char *out, int max) {
     int i = 0; uint8_t c;
     while (i < max - 1 && cpu_vread8(va + i, &c) && c >= 9 && c < 127) out[i++] = c;
@@ -26,6 +28,7 @@ static void hook(uint32_t pc) {
         char s0[80], s1[80], s2[80];
         rdstr(cpu.r[0], s0, 80); rdstr(cpu.r[1], s1, 80); rdstr(cpu.r[2], s2, 80);
         if (getenv("HOOKMEM")) { uint32_t a = cpu.r[strtoul(getenv("HOOKMEM"), 0, 10)], v0 = 0, v1 = 0; cpu_vread32(a, &v0); cpu_vread32(a + 4, &v1); fprintf(stderr, "  mem[r%s=%08x] = %08x %08x\n", getenv("HOOKMEM"), a, v0, v1); }
+        if (getenv("HOOKDUMP")) { uint32_t a = cpu.r[atoi(getenv("HOOKDUMP"))]; fprintf(stderr, "  dump %08x:", a); for (int k = 0; k < 8; k++) { uint32_t w = 0; cpu_vread32(a + 4 * k, &w); fprintf(stderr, " %08x", w); } fprintf(stderr, "\n"); }
         if (getenv("TRACEHOOK") && hook_hits == atoi(getenv("TRACEHOOK"))) cpu.trace_n = getenv("TRACELEN") ? atoi(getenv("TRACELEN")) : 80;
         if (hook_hits++ < (getenv("HOOKMAX") ? atoi(getenv("HOOKMAX")) : 400))
         {
@@ -65,7 +68,7 @@ static void shot(const char *path) {
 
 int main(int argc, char **argv) {
     if (argc < 2) { fprintf(stderr, "usage: runzod rom [frames] [--io N] [--trace N] [--shot out.ppm]\n"); return 1; }
-    int frames = 60; const char *shotp = NULL, *savep = NULL, *loadp = NULL; uint32_t trace = 0, dumpa = 0, dumpn = 0;
+    int frames = 60; const char *shotp = NULL, *savep = NULL, *loadp = NULL, *cardp = NULL; uint32_t trace = 0, dumpa = 0, dumpn = 0;
     for (int i = 2; i < argc; i++) {
         if (!strcmp(argv[i], "--io") && i + 1 < argc) { zod.log_io = 1; zod.log_limit = atoi(argv[++i]); }
         else if (!strcmp(argv[i], "--filter") && i + 1 < argc) zod.log_filter = strtoul(argv[++i], 0, 0);
@@ -77,6 +80,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--shot") && i + 1 < argc) shotp = argv[++i];
         else if (!strcmp(argv[i], "--save") && i + 1 < argc) savep = argv[++i];
         else if (!strcmp(argv[i], "--load") && i + 1 < argc) loadp = argv[++i];
+        else if (!strcmp(argv[i], "--card") && i + 1 < argc) cardp = argv[++i];
         else if (!strcmp(argv[i], "--dump") && i + 2 < argc) { dumpa = strtoul(argv[++i], 0, 0); dumpn = strtoul(argv[++i], 0, 0); }
         else frames = atoi(argv[i]);
     }
@@ -92,25 +96,36 @@ int main(int argc, char **argv) {
         if (!sd || !zod_load_state(sd, sl)) { fprintf(stderr, "cannot load state %s\n", loadp); return 1; }
         free(sd);
     }
+    { extern int sd_log; sd_log = getenv("SDLOG") != NULL; }
+    if (cardp) {
+        int fd = open(cardp, O_RDWR);
+        if (fd < 0) { perror(cardp); return 1; }
+        sd_attach(fd, (uint64_t)lseek(fd, 0, SEEK_END));
+    }
     if (getenv("HOOKS")) {
         patches_install(hook);
         char *p = getenv("HOOKS");
-        while (*p && nhooks < 64) {
+        while (*p && nhooks < 2048) {
             uint32_t a = strtoul(p, &p, 16) & ~1u; hooks[nhooks++] = a;
             patch_arm(a);
             if (*p == ',') p++; else break;
         }
     }
     { extern int w2d_break_at; if (getenv("BRK2D")) w2d_break_at = atoi(getenv("BRK2D")); }
-    if (getenv("BRK")) { sscanf(getenv("BRK"), "%x-%x", &cpu.dbg_lo, &cpu.dbg_hi); if (getenv("BRKSKIP")) cpu.dbg_skip = atoi(getenv("BRKSKIP")); }
+    if (getenv("BRK") && !getenv("BRKFROM")) { sscanf(getenv("BRK"), "%x-%x", &cpu.dbg_lo, &cpu.dbg_hi); if (getenv("BRKSKIP")) cpu.dbg_skip = atoi(getenv("BRKSKIP")); }
     /* TAPS="frame:x,y;frame:x,y" taps the screen (held for 6 frames) */
     int tapf[32], tapx[32], tapy[32], ntap = 0;
     if (getenv("TAPS")) { const char *p = getenv("TAPS"); while (ntap < 32 && sscanf(p, "%d:%d,%d", &tapf[ntap], &tapx[ntap], &tapy[ntap]) == 3) { ntap++; p = strchr(p, ';'); if (!p) break; p++; } }
+    FILE *wav = getenv("WAV") ? fopen(getenv("WAV"), "wb") : NULL;
+    uint32_t wav_frames = 0;
+    if (wav) { uint8_t hdr[44] = { 0 }; fwrite(hdr, 1, 44, wav); }
     int iofrom = getenv("IOFROM") ? atoi(getenv("IOFROM")) : -1;
     if (iofrom > 0) zod.log_io = 0;
     for (int f = 0; f < frames && !cpu.dbg_hit; f++) {
         if (f == iofrom) { zod.log_io = !getenv("LOG2D"); if (getenv("LOG2D")) zod.log_2d = atoi(getenv("LOG2D")); }
         if (getenv("PROF") && f == atoi(getenv("PROF"))) zod.prof = prof;
+        if (getenv("BRKSP")) sscanf(getenv("BRKSP"), "%x-%x", &cpu.dbg_sp_lo, &cpu.dbg_sp_hi);
+        if (getenv("BRKFROM") && f == atoi(getenv("BRKFROM"))) { sscanf(getenv("BRK"), "%x-%x", &cpu.dbg_lo, &cpu.dbg_hi); if (getenv("BRKSKIP")) cpu.dbg_skip = atoi(getenv("BRKSKIP")); }
         /* STICK="frame:x,y:len;..." deflects the analog controller (-32767..32767) */
         if (getenv("STICK")) {
             const char *p = getenv("STICK"); int sf, sx, sy, sl;
@@ -134,10 +149,12 @@ int main(int argc, char **argv) {
             if (f == tapf[t] + (getenv("TAPLEN") ? atoi(getenv("TAPLEN")) : 6)) zod_touch(tapx[t], tapy[t], 0);
         }
         zod_run_frame();
+        if (wav) { int16_t buf[4096 * 2]; int n; while ((n = zod_audio_read(buf, 4096)) > 0) { fwrite(buf, 4, (size_t)n, wav); wav_frames += (uint32_t)n; } }
         if (getenv("SHOTEVERY") && f % atoi(getenv("SHOTEVERY")) == 0) { char pth[64]; snprintf(pth, sizeof pth, "/tmp/f_%05d.ppm", f); shot(pth); }
     }
     if (cpu.dbg_hit) fprintf(stderr, "BREAK at %08x\n", cpu.r[15]);
     fprintf(stderr, "pc=%08x cpsr=%08x cycles=%llu halted=%d\n", cpu.r[15], cpu_get_cpsr(), (unsigned long long)cpu.cycles, cpu.halted);
+    fprintf(stderr, "far=%08x dfsr=%08x ifsr=%08x lr_abt=%08x spsr=%08x\n", cpu.far, cpu.dfsr, cpu.ifsr, cpu.r[14], cpu.spsr);
     for (int i = 0; i < 16; i++) fprintf(stderr, "r%-2d=%08x%s", i, cpu.r[i], (i & 3) == 3 ? "\n" : "  ");
     for (uint32_t i = 0; i < dumpn; i++) {
         uint32_t v = 0;
@@ -156,6 +173,13 @@ int main(int argc, char **argv) {
     if (getenv("W42REGS")) { uint32_t a, b; sscanf(getenv("W42REGS"), "%x-%x", &a, &b);
         for (uint32_t r = a; r < b; r += 4) fprintf(stderr, "%04x: %08x%s", r, w42.reg[r >> 2], ((r - a) & 0xC) == 0xC ? "\n" : "  "); }
     if (getenv("W42MEM")) { FILE *f = fopen(getenv("W42MEM"), "wb"); fwrite(w42.imem, 1, W42_IMEM_SIZE, f); fwrite(w42.emem, 1, W42_EMEM_SIZE, f); fclose(f); }
+    if (wav) {
+        uint32_t rate = audio_rate, bytes = wav_frames * 4;
+        uint8_t h[44] = { 'R','I','F','F', 0,0,0,0, 'W','A','V','E', 'f','m','t',' ', 16,0,0,0, 1,0, 2,0, 0,0,0,0, 0,0,0,0, 4,0, 16,0, 'd','a','t','a', 0,0,0,0 };
+        uint32_t v; v = bytes + 36; memcpy(h + 4, &v, 4); memcpy(h + 24, &rate, 4); v = rate * 4; memcpy(h + 28, &v, 4); memcpy(h + 40, &bytes, 4);
+        fseek(wav, 0, SEEK_SET); fwrite(h, 1, 44, wav); fclose(wav);
+        fprintf(stderr, "wav: %u frames\n", wav_frames);
+    }
     if (zod.prof) prof_dump();
     if (savep) {
         uint8_t *sd; size_t sl = zod_save_state(&sd);

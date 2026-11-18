@@ -157,14 +157,19 @@ static uint32_t reg_read(uint32_t r) {
     return v;
 }
 
+static void w42_int_update(void);
+
 void w4200_reg_write(uint32_t r, uint32_t v) {
     r &= 0xFFFC;
     if (r < 8) return;                             /* chip id / revision are read-only */
+    uint32_t old204 = REG(0x204);
     REG(r) = v;
     switch (r) {
     case 0x0214: REG(0x21C) = 0; break;            /* CP_RB_BASE: (re)initialising the ring resets the read pointer */
     case 0x0220: cp_run(); break;                  /* CP_RB_WPTR */
     case 0x0D0C: if (v & 0x400) adc_seq = 0; break; /* ADC conversion start */
+    case 0x0200: w42_int_update(); break;
+    case 0x0204: REG(0x204) = old204 & ~v; w42_int_update(); break;   /* write 1 to clear */
     }
     if (r >= 0x1000 && r < 0x2000) w2d_write(r, v);
 }
@@ -234,6 +239,24 @@ void w4200_write(uint32_t off, uint32_t v, int size) {
  * The panel is 320x480 portrait. GRAPHIC_CTRL.portrait_mode selects how the controller walks
  * memory: mode 0 scans a 320-wide portrait surface directly; modes 1/2 scan a 480-wide
  * landscape surface rotated (GRAPHIC_OFFSET then points at the bottom-left / top-right). */
+/* GEN_INT_CNTL (0x200) / GEN_INT_STATUS (0x204): the vertical-blank interrupt, wired to a
+ * GPIO input of the i.MX1 (active low). */
+static int w42_int_port = -1, w42_int_pin;
+static void w42_int_update(void) {
+    if (w42_int_port < 0) {
+        const char *e = getenv("W42INT");
+        w42_int_port = 0; w42_int_pin = 13;
+        if (e) sscanf(e, "%d.%d", &w42_int_port, &w42_int_pin);
+    }
+    int active = (REG(0x204) & REG(0x200) & 0xFFFF) != 0;
+    gpio_set_input(w42_int_port, 1u << w42_int_pin, active ? 0 : 1);
+}
+
+void w4200_vblank(void) {
+    REG(0x204) |= getenv("W42VBL") ? strtoul(getenv("W42VBL"), 0, 16) : 1;
+    w42_int_update();
+}
+
 void w4200_scanout(void) {
     uint32_t ctrl = REG(0x414), off = REG(0x418) & 0xFFFFFF, pitch = REG(0x41C) & 0x3FFF;
     int mode = (ctrl >> 3) & 3;
