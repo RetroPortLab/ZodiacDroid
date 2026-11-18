@@ -791,7 +791,7 @@ public class MainActivity extends Activity {
         java.util.List<CardFile> out = new java.util.ArrayList<>();
         boolean zip = data.length > 4 && data[0] == 'P' && data[1] == 'K' && data[2] == 3 && data[3] == 4;
         if (!zip) {
-            out.add(new CardFile(isPalmDb(name) ? "/PALM/Launcher/" + name : "/" + name, data));
+            if (!name.startsWith("._")) out.add(new CardFile(isPalmDb(name) ? "/PALM/Launcher/" + name : "/PALM/Programs/" + name, data));
             return out;
         }
         java.util.Map<String, byte[]> entries = new java.util.LinkedHashMap<>();
@@ -831,10 +831,14 @@ public class MainActivity extends Activity {
             }
             return out;
         }
-        for (java.util.Map.Entry<String, byte[]> e : entries.entrySet()) {   /* no installer: databases to Launcher, the rest as laid out */
-            String n = e.getKey();
-            if (isPalmDb(n)) out.add(new CardFile("/PALM/Launcher/" + baseName(n), e.getValue()));
-            else if (!n.toLowerCase(Locale.US).matches(".*\\.(exe|pdf|txt|ini|htm|html|doc)$")) out.add(new CardFile("/" + n, e.getValue()));
+        /* No installer: databases go to /PALM/Launcher, everything else (a game's data folder) goes
+         * under /PALM/Programs with its folder layout kept. Mac resource-fork junk is skipped. */
+        for (java.util.Map.Entry<String, byte[]> e : entries.entrySet()) {
+            String n = e.getKey().replaceAll("^/+", "");
+            String base = baseName(n);
+            if (n.startsWith("__MACOSX/") || base.startsWith("._") || base.equals(".DS_Store")) continue;
+            if (isPalmDb(n)) out.add(new CardFile("/PALM/Launcher/" + base, e.getValue()));
+            else if (!n.toLowerCase(Locale.US).matches(".*\\.(exe|pdf|txt|ini|htm|html|doc)$")) out.add(new CardFile("/PALM/Programs/" + n, e.getValue()));
         }
         return out;
     }
