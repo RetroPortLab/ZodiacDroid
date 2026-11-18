@@ -156,7 +156,8 @@ int main(int argc, char **argv) {
         }
         zod_run_frame();
         if (wav) { int16_t buf[4096 * 2]; int n; while ((n = zod_audio_read(buf, 4096)) > 0) { fwrite(buf, 4, (size_t)n, wav); wav_frames += (uint32_t)n; } }
-        if (getenv("SHOTEVERY") && f % atoi(getenv("SHOTEVERY")) == 0) { char pth[64]; snprintf(pth, sizeof pth, "/tmp/f_%05d.ppm", f); shot(pth); }
+        if (getenv("FRAMEMARK")) fprintf(stderr, "FRAME %d\n", f);
+        if (getenv("SHOTEVERY") && f % atoi(getenv("SHOTEVERY")) == 0) { char pth[256]; snprintf(pth, sizeof pth, "%s/f_%05d.ppm", getenv("SHOTDIR") ? getenv("SHOTDIR") : "/tmp", f); shot(pth); }
     }
     if (cpu.dbg_hit) fprintf(stderr, "BREAK at %08x\n", cpu.r[15]);
     fprintf(stderr, "pc=%08x cpsr=%08x cycles=%llu halted=%d\n", cpu.r[15], cpu_get_cpsr(), (unsigned long long)cpu.cycles, cpu.halted);

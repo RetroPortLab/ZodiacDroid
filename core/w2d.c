@@ -283,7 +283,10 @@ static void trigger(int x, int y, int w, int h) {
     uint32_t src = GMC_SRC_SOURCE;
     uint32_t rop = GMC_ROP3;
     int use_src = ((rop >> 2) ^ rop) & 0x33;
-    if (use_src && src == 3) { start_hostdata(x, y, w, h); return; }
+    /* Source "host data" with GMC bit 31 set: TwGfx uses this to show frames it has already
+     * DMA'd into W4200 memory at SRC_OFFSET (no host data follows), e.g. Stuntcar Extreme
+     * during races. Copy from memory like an ordinary blit. */
+    if (use_src && src == 3 && !(GMC >> 31)) { start_hostdata(x, y, w, h); return; }
     uint32_t sy = R(SRC_Y_X) >> 16, sx = R(SRC_Y_X) & 0xFFFF;
     do_blit(x, y, w, h, (int)sx, (int)sy);
 }
