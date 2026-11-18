@@ -149,6 +149,7 @@ static void autocal_tick(void) {
 
 void zod_run_frame(void) {
     autocal_tick();
+    w4200_stick_tick();
     int slice = 2000;
     int total = zod.cpu_hz / 60;
     for (int done = 0; done < total; ) {

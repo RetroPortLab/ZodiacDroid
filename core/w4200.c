@@ -121,6 +121,7 @@ static void cp_run(void) {
  * tagged with the channel in bits 24..29, 10-bit values, centre 512: channel 1 is the
  * horizontal axis (inverted), channel 2 the vertical. */
 static int stick_x, stick_y;          /* -32767..32767, right/down positive */
+static int eff_x, eff_y, eff_hold;    /* what the ADC reports: a deflection is kept for a minimum time */
 static unsigned adc_seq;
 
 void zod_stick(int x, int y) {
@@ -129,10 +130,24 @@ void zod_stick(int x, int y) {
     if (y < -32767) y = -32767;
     if (y > 32767) y = 32767;
     stick_x = x; stick_y = y;
+    if (x > 9000 || x < -9000 || y > 9000 || y < -9000) { eff_x = x; eff_y = y; eff_hold = 24; }
+}
+
+/* The OS notices a deflected stick promptly only when GPIO0 pin 11 (the key-wake line) is
+ * pulsed; otherwise its idle poll takes about two seconds to see it and menus feel dead.
+ * Pulse the line every few frames while the stick is off centre. */
+void w4200_stick_tick(void) {
+    static int low, hold;
+    if (eff_hold > 0 && --eff_hold == 0) { eff_x = stick_x; eff_y = stick_y; }
+    else if (eff_hold == 0) { eff_x = stick_x; eff_y = stick_y; }
+    int off = eff_x > 9000 || eff_x < -9000 || eff_y > 9000 || eff_y < -9000;
+    if (low > 0) { if (--low == 0) gpio_set_input(0, 1u << 11, 1); return; }
+    if (!off) { hold = 0; return; }
+    if (hold++ % 6 == 0) { gpio_set_input(0, 1u << 11, 0); low = 3; }
 }
 
 static uint32_t adc_pop(void) {
-    int ch1 = 512 - stick_x / 64, ch2 = 512 + stick_y / 64;
+    int ch1 = 512 - eff_x / 64, ch2 = 512 + eff_y / 64;
     if (ch1 > 1023) ch1 = 1023;
     if (ch2 > 1023) ch2 = 1023;
     if (ch1 < 0) ch1 = 0;

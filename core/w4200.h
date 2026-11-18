@@ -29,3 +29,5 @@ void     w2d_init(void);
 uint32_t w2d_read(uint32_t r, uint32_t v);
 void     w2d_write(uint32_t r, uint32_t v);
 int      w2d_packet3(uint32_t op, const uint32_t *d, uint32_t n);
+
+void w4200_stick_tick(void);
