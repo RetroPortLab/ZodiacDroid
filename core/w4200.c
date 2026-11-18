@@ -275,6 +275,15 @@ void w4200_vblank(void) {
     w42_int_update();
 }
 
+/* Linear landscape display buffer (modes 1/2) for software blits: host pointer to its first row, and its pitch. */
+uint8_t *w4200_display_base(void) {
+    uint32_t ctrl = REG(0x414), off = REG(0x418) & 0xFFFFFF, pitch = REG(0x41C) & 0x3FFF;
+    int mode = (ctrl >> 3) & 3;
+    if (!pitch || !(ctrl & 0x800) || mode == 0) return NULL;
+    return w42_ptr(mode == 2 ? off - (pitch - 4) : off - 319 * pitch);
+}
+uint32_t w4200_display_pitch(void) { return REG(0x41C) & 0x3FFF; }
+
 void w4200_scanout(void) {
     uint32_t ctrl = REG(0x414), off = REG(0x418) & 0xFFFFFF, pitch = REG(0x41C) & 0x3FFF;
     int mode = (ctrl >> 3) & 3;

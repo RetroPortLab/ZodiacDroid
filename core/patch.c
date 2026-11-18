@@ -2,6 +2,7 @@
  * Each patch checks the instruction it expects before arming, so a different ROM is left alone. */
 #include "zodiac.h"
 #include "cpu.h"
+#include "w4200.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -75,17 +76,36 @@ static void new_boot(void) { cal_done = 0; }
  * to 50..950 by the DAL itself). */
 static void battery_level(void) { cpu.r[0] = 900; cpu.r[15] = cpu.r[14] & ~1u; if (!(cpu.r[14] & 1)) cpu.cpsr &= ~0x20u; }
 
-/* Surface-busy poll (graphics API at 0x20098CF8): a game that queues an asynchronous blit and then
- * spins on this call waits for the blit to finish. The OS thread meant to finish it is never
- * scheduled while the game spins, so complete the pending blit from inside the poll. */
-static void surface_busy_poll(void) {
-    uint32_t flags = 0;
-    if (cpu.r[1] != 0xFF051962u || !cpu_vread32(cpu.r[0] + 0x2C, &flags) || !(flags & 1)) return;
-    cpu.r[15] = 0x20098FD8u;          /* run the blit-completion routine instead, then return to the caller */
+/* Tapwave graphics blit to the display (ROM 0x2009A520): the OS only queues the copy and relies on a
+ * worker we do not emulate, leaving the source surface marked busy, so games that present this way
+ * (Tony Hawk 4) never show a frame and spin forever on the busy flag. Do the copy here instead.
+ * r5 = source rect (x,y,w,h), r7 = destination point, r6 = destination surface (the display, no data
+ * pointer), lr = source surface (its descriptor at +0x1C holds the chip memory offset and pitch). */
+static void display_blit(void) {
+    uint32_t dst = cpu.r[6], src = cpu.r[14], rect = cpu.r[5], pt = cpu.r[7];
+    uint32_t desc, sdata, spitch, sw, sh, rx, ry, rw, rh, dx, dy, dflags;
+    /* the surface's backing store: its descriptor (at +0x1C) holds the chip memory offset (+0x1C) and pitch (+0x20) */
+    if (!cpu_vread32(src + 0x1C, &desc) || !cpu_vread32(desc + 0x1C, &sdata) || !cpu_vread32(desc + 0x20, &spitch) || !cpu_vread32(dst + 0x20, &dflags) ||
+        !cpu_vread32(rect, &rx) || !cpu_vread32(rect + 4, &ry) || !cpu_vread32(rect + 8, &rw) || !cpu_vread32(rect + 12, &rh) ||
+        !cpu_vread32(pt, &dx) || !cpu_vread32(pt + 4, &dy) || !cpu_vread32(src + 0x34, &sw) || !cpu_vread32(src + 0x38, &sh)) return;
+    if (dflags != 0 || sdata < 0x100000u || sdata >= 0x1000000u) return;       /* not the display / not chip memory: leave it to the OS */
+    uint32_t pitch = w4200_display_pitch();
+    uint8_t *base = w4200_display_base();
+    if (!base || !pitch) return;
+    for (uint32_t j = 0; j < rh && ry + j < sh && dy + j < 320; j++) {
+        uint8_t *s = w42_ptr(sdata + (ry + j) * spitch + rx * 2);
+        if (!s) continue;
+        uint32_t w = rw;
+        if (rx + w > sw) w = sw - rx;
+        if (dx + w > 480) w = 480 - dx;
+        memcpy(base + (dy + j) * pitch + dx * 2, s, (size_t)w * 2);
+    }
+    cpu.r[0] = 0;
+    cpu.r[15] = 0x2009A614u;                    /* the function's normal "success" return */
 }
 
 static const Patch patches[] = {
-    { 0x20098CF8, 0xE59F24C8, surface_busy_poll, "surface busy poll" },
+    { 0x2009A63C, 0xE3810009, display_blit, "display blit (queued copy never completed)" },
     { 0x200A4524, 0xE19A0000, sig_ok, "database signature check" },
     { 0x200A3FA8, 0xE92D4FFF, sig_accept_all, "application signature check (allow unsigned software)" },
     { 0x2033259C, 0xE3560000, skip_setup_app, "run the Welcome setup app only once" },

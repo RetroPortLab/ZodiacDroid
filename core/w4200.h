@@ -21,6 +21,8 @@ void     w4200_write(uint32_t off, uint32_t v, int size);
 void     w4200_reg_write(uint32_t r, uint32_t v);
 uint8_t *w4200_page(uint32_t pa);
 uint8_t *w42_ptr(uint32_t chip_addr);
+uint8_t *w4200_display_base(void);
+uint32_t w4200_display_pitch(void);
 void     w4200_scanout(void);
 void     w4200_vblank(void);
 
