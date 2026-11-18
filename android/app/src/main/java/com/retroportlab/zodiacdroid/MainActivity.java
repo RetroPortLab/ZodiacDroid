@@ -456,6 +456,15 @@ public class MainActivity extends Activity {
     }
 
     private int capturing = -1;
+    private boolean trigL, trigR;   // analog trigger axes currently pressed (for capture)
+
+    private void captureKey(int code) {
+        int k = code == KeyEvent.KEYCODE_BACK ? 0 : code;
+        prefs.edit().putInt("key_" + capturing, k).apply();
+        setRowValue(capturingRow, keyName(k));
+        capturing = -1;
+    }
+
     private View capturingRow = null;
 
     private static String keyName(int code) {
@@ -1139,12 +1148,7 @@ public class MainActivity extends Activity {
         boolean down = e.getAction() == KeyEvent.ACTION_DOWN, up = e.getAction() == KeyEvent.ACTION_UP;
 
         if (screen == SCREEN_CONTROLS && capturing >= 0) {
-            if (down && e.getRepeatCount() == 0) {
-                int k = code == KeyEvent.KEYCODE_BACK ? 0 : code;
-                prefs.edit().putInt("key_" + capturing, k).apply();
-                setRowValue(capturingRow, keyName(k));
-                capturing = -1;
-            }
+            if (down && e.getRepeatCount() == 0) captureKey(code);
             return true;
         }
         if (menuOpen && swallowUps > 0 && up && (code == KeyEvent.KEYCODE_BUTTON_START || code == KeyEvent.KEYCODE_BUTTON_SELECT)) {
@@ -1168,6 +1172,7 @@ public class MainActivity extends Activity {
                 return true;
             }
             if (code == KeyEvent.KEYCODE_BUTTON_SELECT) return true;
+            if (KeyEvent.isGamepadButton(code)) return true;   // never let the system act on shoulder/trigger buttons
             return super.dispatchKeyEvent(e);
         }
 
@@ -1181,7 +1186,7 @@ public class MainActivity extends Activity {
             return true;
         }
         int bit = mapKey(code);
-        if (bit == 0) return super.dispatchKeyEvent(e);
+        if (bit == 0) return KeyEvent.isGamepadButton(code) || super.dispatchKeyEvent(e);   // unmapped pad buttons do nothing
         if (down) keyMask |= bit; else if (up) keyMask &= ~bit;
         NativeLib.setButtons(keyMask | axisButtons);
         return true;
@@ -1216,6 +1221,16 @@ public class MainActivity extends Activity {
 
     @Override
     public boolean dispatchGenericMotionEvent(MotionEvent e) {
+        if (screen == SCREEN_CONTROLS && capturing >= 0 && (e.getSource() & InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK
+                && e.getAction() == MotionEvent.ACTION_MOVE) {
+            // L2 / R2 that arrive as analog axes instead of key events
+            boolean l = e.getAxisValue(MotionEvent.AXIS_LTRIGGER) > 0.6f || e.getAxisValue(MotionEvent.AXIS_BRAKE) > 0.6f;
+            boolean r = e.getAxisValue(MotionEvent.AXIS_RTRIGGER) > 0.6f || e.getAxisValue(MotionEvent.AXIS_GAS) > 0.6f;
+            if (l && !trigL) captureKey(KeyEvent.KEYCODE_BUTTON_L2);
+            else if (r && !trigR) captureKey(KeyEvent.KEYCODE_BUTTON_R2);
+            trigL = l; trigR = r;
+            return true;
+        }
         if (screen == SCREEN_GAME && !menuOpen && (e.getSource() & InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK
                 && e.getAction() == MotionEvent.ACTION_MOVE) {
             axisX = e.getAxisValue(MotionEvent.AXIS_X);
