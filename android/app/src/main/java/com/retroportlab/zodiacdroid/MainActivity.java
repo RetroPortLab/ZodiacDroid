@@ -365,6 +365,14 @@ public class MainActivity extends Activity {
             setRowValue(assist, on ? "On" : "Off");
         });
         list.addView(assist);
+        LinearLayout gain = row("Stick sensitivity", "How far you push before Palm OS sees a full push. Higher reacts to lighter pushes and diagonals",
+                GAIN_NAMES[Math.max(0, Math.min(2, prefs.getInt("stickGain", 1)))], null);
+        gain.setOnClickListener(v -> {
+            int n = (prefs.getInt("stickGain", 1) + 1) % GAINS.length;
+            prefs.edit().putInt("stickGain", n).apply();
+            setRowValue(gain, GAIN_NAMES[n]);
+        });
+        list.addView(gain);
         LinearLayout stretch = row("Fill the screen", "Stretch to the full display instead of keeping 3:2",
                 prefs.getBoolean("stretch", false) ? "On" : "Off", null);
         stretch.setOnClickListener(v -> {
@@ -1192,6 +1200,8 @@ public class MainActivity extends Activity {
         return true;
     }
 
+    private static final float[] GAINS = {1f, 1.4f, 2f};
+    private static final String[] GAIN_NAMES = {"Normal", "High", "Max"};
     private int dpad = 0;
     private float axisX = 0, axisY = 0;
 
@@ -1216,6 +1226,9 @@ public class MainActivity extends Activity {
         if ((dpad & 1) != 0) y = -1; else if ((dpad & 2) != 0) y = 1;
         if (Math.abs(x) < 0.12f) x = 0;
         if (Math.abs(y) < 0.12f) y = 0;
+        float g = GAINS[Math.max(0, Math.min(GAINS.length - 1, prefs.getInt("stickGain", 1)))];
+        x = Math.max(-1f, Math.min(1f, x * g));       // Palm OS only registers a push past ~75% of full travel
+        y = Math.max(-1f, Math.min(1f, y * g));
         NativeLib.setStick(Math.round(x * 32767), Math.round(y * 32767));
     }
 
