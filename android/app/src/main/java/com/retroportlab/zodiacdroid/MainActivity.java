@@ -341,13 +341,13 @@ public class MainActivity extends Activity {
         list.addView(fps);
 
         list.addView(sectionTitle("Performance"));
-        LinearLayout clock = row("CPU clock", "The Zodiac runs at 200 MHz. Auto lowers it when your device can't keep up, "
-                + "so games stay at full speed with fewer frames", clockName(clockSetting()), null);
+        LinearLayout clock = row("CPU clock", "The Zodiac runs at 200 MHz. Lower clocks can make 3D games stall, "
+                + "so only change this to experiment", clockName(clockSetting()), null);
         clock.setOnClickListener(v -> {
             int i = 0;
             for (int k = 0; k < CLOCKS.length; k++) if (CLOCKS[k] == clockSetting()) i = k;
             int c = CLOCKS[(i + 1) % CLOCKS.length];
-            prefs.edit().putInt("clock", c).apply();
+            prefs.edit().putInt("clock2", c).apply();
             setRowValue(clock, clockName(c));
         });
         list.addView(clock);
@@ -374,9 +374,9 @@ public class MainActivity extends Activity {
         rom.requestFocus();
     }
 
-    private static final int[] CLOCKS = {0, 200, 166, 133, 100};
+    private static final int[] CLOCKS = {200, 166, 133};
     private static String clockName(int mhz) { return mhz == 0 ? "Auto" : mhz + " MHz"; }
-    private int clockSetting() { return prefs.getInt("clock", 0); }
+    private int clockSetting() { int c = prefs.getInt("clock2", 200); return c == 0 ? 200 : c; }
 
     private int filterMode() { return Math.max(0, Math.min(FILTERS.length - 1, prefs.getInt("filter", 2))); }
 

@@ -125,6 +125,8 @@ int main(int argc, char **argv) {
     for (int f = 0; f < frames && !cpu.dbg_hit; f++) {
         if (f == iofrom) { zod.log_io = !getenv("LOG2D"); if (getenv("LOG2D")) zod.log_2d = atoi(getenv("LOG2D")); }
         if (getenv("PROF") && f == atoi(getenv("PROF"))) zod.prof = prof;
+        /* MHZSEQ="frame:mhz;..." changes the CPU clock while running */
+        if (getenv("MHZSEQ")) { const char *p = getenv("MHZSEQ"); int mf, mm; while (sscanf(p, "%d:%d", &mf, &mm) == 2) { if (f == mf) zod_set_cpu_mhz(mm); p = strchr(p, ';'); if (!p) break; p++; } }
         if (getenv("BRKSP")) sscanf(getenv("BRKSP"), "%x-%x", &cpu.dbg_sp_lo, &cpu.dbg_sp_hi);
         if (getenv("BRKFROM") && f == atoi(getenv("BRKFROM"))) { sscanf(getenv("BRK"), "%x-%x", &cpu.dbg_lo, &cpu.dbg_hi); if (getenv("BRKSKIP")) cpu.dbg_skip = atoi(getenv("BRKSKIP")); }
         /* STICK="frame:x,y:len;..." deflects the analog controller (-32767..32767) */

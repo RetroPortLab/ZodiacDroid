@@ -7,6 +7,7 @@ typedef struct {
     uint8_t *buf;
     size_t len, cap, pos;
     int loading, err;
+    uint32_t version;
 } StateIO;
 
 void st_bytes(StateIO *s, void *p, size_t n);

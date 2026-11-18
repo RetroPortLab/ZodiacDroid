@@ -62,6 +62,7 @@ void patch_arm(uint32_t va) {
     if (!bitmap) return;
     uint32_t bi = (va - 0x20000000u) >> 1;
     bitmap[bi >> 3] |= 1 << (bi & 7);
+    if (va - 0x20000000u + 2 > cpu.hle_span) cpu.hle_span = va - 0x20000000u + 2;
 }
 
 /* Byte-level fix-ups to 68k application code stored in the ROM. Each one is applied only if
@@ -102,6 +103,7 @@ void patches_install(void (*debug_hook)(uint32_t)) {
     else memset(bitmap, 0, 0x20000000 / 16);
     user_hook = debug_hook;
     cpu.hle_bitmap = bitmap;
+    cpu.hle_span = 0;
     cpu.hle_hook = hook;
     for (unsigned i = 0; i < NPATCH; i++) {
         uint32_t off = patches[i].va - 0x20000000u;   /* ROM is linked at 0x20000000 */

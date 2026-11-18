@@ -38,6 +38,7 @@ typedef struct {
     /* debug */
     void (*hle_hook)(uint32_t pc);     /* called when executing an address marked in hle_bitmap */
     uint8_t *hle_bitmap;               /* 1 bit per halfword over the first 512MB, or NULL */
+    uint32_t hle_span;                 /* bytes above 0x20000000 that may hold marked addresses */
     void (*undef_hook)(uint32_t pc, uint32_t insn, int thumb); /* optional: called on undefined instructions */
     uint32_t trace_n;
     uint32_t dbg_lo, dbg_hi, dbg_sp_lo, dbg_sp_hi; int dbg_hit, dbg_skip;      /* stop when pc enters [lo,hi) */

@@ -211,7 +211,16 @@ static uint64_t rtc_base_sec;     /* wall time (seconds) at emulated time 0 */
 static uint32_t rtc_isr;
 static uint64_t rtc_last_ms;
 
-static uint64_t emu_ms(void) { return cpu_now() / (zod.cpu_hz / 1000); }
+/* Emulated time: the clock can change while running (zod_set_cpu_mhz), so time is counted
+ * from the last change rather than derived from the total cycle count. */
+static uint64_t ms_base, cyc_base;
+static uint64_t emu_ms(void) { return ms_base + (cpu_now() - cyc_base) / (zod.cpu_hz / 1000); }
+void io_clock_change(uint32_t new_hz) {
+    uint64_t now = cpu_now();
+    uint64_t rem = (now - cyc_base) % (zod.cpu_hz / 1000);   /* keep the partial millisecond */
+    ms_base = emu_ms();
+    cyc_base = now - rem * (new_hz / 1000) / (zod.cpu_hz / 1000);
+}
 
 static void rtc_sync(void) {
     uint64_t ms = emu_ms();
@@ -410,7 +419,7 @@ void io_init(void) {
     time_t now = time(NULL);
     struct tm lt; localtime_r(&now, &lt);
     rtc_base_sec = (uint64_t)lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec;
-    rtc_isr = 0; rtc_last_ms = 0;
+    rtc_isr = 0; rtc_last_ms = 0; ms_base = cyc_base = 0;
     memset(gpio_isr, 0, sizeof gpio_isr);
     for (int i = 0; i < 4; i++) gpio_in[i] = 0xFFFFFFFF;
     if (zod.model == 2) gpio_in[3] &= ~0x40;   /* PD6 low = Zodiac 2 (two SDRAM banks) */
@@ -453,6 +462,7 @@ void io_state(StateIO *s) {
         ST(s, gpt[i].count_fp); ST(s, gpt[i].last_cycle);
     }
     ST(s, rtc_base_sec); ST(s, rtc_isr); ST(s, rtc_last_ms);
+    if (s->version >= 4) { ST(s, ms_base); ST(s, cyc_base); } else if (s->loading) ms_base = cyc_base = 0;
     ST(s, gpio_in); ST(s, gpio_isr);
     if (s->loading) aitc_update();
 }

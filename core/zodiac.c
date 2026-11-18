@@ -117,6 +117,8 @@ void zod_set_cpu_mhz(int mhz) {
     if (mhz < 50) mhz = 50;
     if (mhz > 200) mhz = 200;
     io_tick(0);                       /* bring timers up to date at the old rate */
+    extern void io_clock_change(uint32_t new_hz);
+    io_clock_change((uint32_t)mhz * 1000000u);
     zod.cpu_hz = (uint32_t)mhz * 1000000u;
 }
 

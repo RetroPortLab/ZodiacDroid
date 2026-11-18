@@ -9,7 +9,7 @@
 #include <zlib.h>
 
 #define STATE_MAGIC   0x53444F5Au   /* "ZODS" */
-#define STATE_VERSION 3
+#define STATE_VERSION 4
 
 void st_bytes(StateIO *s, void *p, size_t n) {
     if (s->err) return;
@@ -47,6 +47,7 @@ static void sparse(StateIO *s, uint8_t *mem, size_t size) {
 }
 
 static void machine(StateIO *s, uint32_t version) {
+    s->version = version;
     ST(s, zod.model);
     ST(s, zod.cycles);
     st_bytes(s, zod.io, sizeof zod.io);
