@@ -132,7 +132,23 @@ void zod_soft_reset(void) {
     patches_install(NULL);
 }
 
+/* Automatic pen calibration: tap the three calibration targets (top-left, bottom-right, centre). */
+static int autocal = -1;
+void autocal_start(void) { autocal = 0; }
+static void autocal_tick(void) {
+    static const int T[3][2] = { {20, 20}, {459, 299}, {240, 121} };
+    if (autocal < 0) return;
+    int k = autocal++;
+    for (int i = 0; i < 3; i++) {
+        int t0 = 120 + i * 100;
+        if (k == t0) zod_touch(T[i][0], T[i][1], 1);
+        if (k == t0 + 12) zod_touch(T[i][0], T[i][1], 0);
+    }
+    if (k > 440) autocal = -1;
+}
+
 void zod_run_frame(void) {
+    autocal_tick();
     int slice = 2000;
     int total = zod.cpu_hz / 60;
     for (int done = 0; done < total; ) {

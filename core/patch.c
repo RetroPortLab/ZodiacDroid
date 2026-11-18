@@ -51,18 +51,24 @@ static void caller_trusted(void) { cpu.r[0] = 1; cpu.r[15] = cpu.r[14] & ~1u; if
  * our environment. Let it run once per machine (a fresh install), then skip it. The flag is
  * part of the save state; states from before it existed count as already set up. */
 int shell_seen;
-static void skip_setup_app(void) { if (shell_seen) cpu.r[6] = 0; else shell_seen = 1; }
+static void new_boot(void);
+static void skip_setup_app(void) { new_boot(); if (shell_seen) cpu.r[6] = 0; else shell_seen = 1; }
 
-/* Startup of the shell: after the Welcome app it picks Preferences as the next application,
- * and Preferences goes straight to the pen Calibration panel because the saved calibration
- * (resource 'psys' #3 in the Saved Preferences database) is not found again after a reset.
- * Once the device has been set up, start the Launcher in its place. r0 = shell globals. */
-#define LAUNCHER_DB    0x20262BC0u
-#define PREFERENCES_DB 0x203333FCu
-static void launcher_not_setup(void) {
-    uint32_t v;
-    if (shell_seen && cpu_vread32(cpu.r[0] + 0x50, &v) && v == PREFERENCES_DB) cpu_vwrite32(cpu.r[0] + 0x50, LAUNCHER_DB);
+/* After a reset the saved pen calibration (resource 'psys' #3 in the Saved Preferences database)
+ * is not found, so the shell starts Preferences, which opens the pen Calibration panel (launch
+ * code 0x81C6), and the rebooted OS runs with an uncalibrated pen. Once the device has been set
+ * up, answer the calibration targets ourselves (see autocal_* in zodiac.c), and when the panel
+ * is requested a second time (the calibration is still "not saved") start the Launcher instead.
+ * Launch stub arguments: r0 = database, r1 = flags, r2 = launch code. */
+#define LAUNCHER_DB 0x20262BC0u
+extern void autocal_start(void);
+static int cal_done;
+static void on_shell_launch(void) {
+    if (!shell_seen || cpu.r[2] != 0x81C6u) return;
+    if (!cal_done) { cal_done = 1; autocal_start(); }
+    else { cpu.r[0] = LAUNCHER_DB; cpu.r[2] = 0; }
 }
+static void new_boot(void) { cal_done = 0; }
 
 /* Battery level: the DAL samples the battery through a gauge we don't emulate, then
  * scales it by factory calibration data. Report a full battery (the result is clamped
@@ -74,7 +80,7 @@ static const Patch patches[] = {
     { 0x200A3FA8, 0xE92D4FFF, sig_accept_all, "application signature check (allow unsigned software)" },
     { 0x2033259C, 0xE3560000, skip_setup_app, "run the Welcome setup app only once" },
     { 0x200A5014, 0xE92D41F0, caller_trusted, "caller signature check (allow unsigned software)" },
-    { 0x2033283C, 0xE5900050, launcher_not_setup, "start the Launcher instead of setup after a reset" },
+    { 0x203331BC, 0xE519C008, on_shell_launch, "automatic pen calibration after a reset" },
     { 0x20084912, 0x2800491D, hal_delay, "HALDelay" },
     { 0x204B2BEC, 0xA210B580, pins_stub, "Pen Input Manager stub (UI)" },
     { 0x20055E28, 0xA2A6B580, pins_stub, "Pen Input Manager stub (system)" },
