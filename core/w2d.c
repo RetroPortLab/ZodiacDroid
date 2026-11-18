@@ -1,3 +1,4 @@
+#include <stdlib.h>
 /* ZodiacDroid - W4200 2D engine.
  * W100-family "E2" engine. Register names/layout follow the ATI Imageon W100 as described
  * by the Linux w100fb driver; behaviour beyond that is inferred from what the Zodiac DAL
@@ -253,7 +254,7 @@ static void host_data(uint32_t v) {
                     put_px(dbase, dpitch, 16, x, y, (uint32_t)(r << 11 | g << 5 | bl));
                 }
             }
-            if (++hb.cx >= hb.w) { hb.cx = 0; if (++hb.cy >= hb.h) hb.active = 0; break; }
+            if (++hb.cx >= hb.w) { hb.cx = 0; if (++hb.cy >= hb.h) hb.active = 0; }   /* rows are packed */
         }
     } else if (hb.mono) {
         /* 32 pixels per dword; GMC byte_pix_order 0 = MSB first (as on the Radeon) */
@@ -317,6 +318,7 @@ int w2d_packet3(uint32_t op, const uint32_t *d, uint32_t n) {
         int x = (int)(d[0] & 0xFFFF), y = (int)(d[0] >> 16), w = (int)(d[1] & 0xFFFF), h = (int)(d[1] >> 16);
         if (zod.log_2d) fprintf(stderr, "[2D] hostdata dst=%08x/%u (%d,%d %dx%d) n=%u gmc=%08x\n", R(DST_OFFSET), R(DST_PITCH) & 0x3FFF, x, y, w, h, n, GMC);
         start_hostdata(x, y, w, h);
+        if (getenv("NIBDUMP") && hb.nib && w == 252) { FILE *f = fopen(getenv("NIBDUMP"), "ab"); fwrite(d + 2, 4, n - 2, f); fclose(f); }
         for (uint32_t i = 2; i < n && hb.active; i++) host_data(d[i]);
         hb.active = 0;
         return 1;

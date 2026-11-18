@@ -102,7 +102,7 @@ int main(int argc, char **argv) {
     int iofrom = getenv("IOFROM") ? atoi(getenv("IOFROM")) : -1;
     if (iofrom > 0) zod.log_io = 0;
     for (int f = 0; f < frames && !cpu.dbg_hit; f++) {
-        if (f == iofrom) zod.log_io = 1;
+        if (f == iofrom) { zod.log_io = !getenv("LOG2D"); if (getenv("LOG2D")) zod.log_2d = atoi(getenv("LOG2D")); }
         if (getenv("PROF") && f == atoi(getenv("PROF"))) zod.prof = prof;
         /* STICK="frame:x,y:len;..." deflects the analog controller (-32767..32767) */
         if (getenv("STICK")) {
