@@ -1,3 +1,4 @@
+#include <dlfcn.h>
 /* ZodiacDroid JNI bridge: runs the emulator on its own thread at 60 Hz and copies each
  * 480x320 frame to the Surface, optionally upscaled with a scanline or LCD-grid filter.
  * Input from the UI thread is latched here and applied by the emulator thread at the start
@@ -157,7 +158,11 @@ static inline uint32_t dim(uint32_t c, int num) {   /* scale RGB by num/256 */
     return 0xFF000000u | (b << 16) | (g << 8) | r;
 }
 
+static uint32_t lut565[65536];
+static int lut_ready;
+
 static void present(void) {
+    if (!lut_ready) { for (uint32_t i = 0; i < 65536; i++) lut565[i] = rgbx((uint16_t)i); lut_ready = 1; }
     pthread_mutex_lock(&win_lock);
     if (window) {
         int scale = filter ? 3 : 1;
@@ -173,7 +178,7 @@ static void present(void) {
                     const uint16_t *src = &zod.fb[y * SCREEN_W];
                     if (scale == 1) {
                         uint32_t *dst = (uint32_t *)b.bits + (size_t)y * b.stride;
-                        for (int x = 0; x < SCREEN_W; x++) dst[x] = rgbx(src[x]);
+                        for (int x = 0; x < SCREEN_W; x++) dst[x] = lut565[src[x]];
                         continue;
                     }
                     for (int sy = 0; sy < 3; sy++) {
@@ -182,7 +187,7 @@ static void present(void) {
                         if (filter == 2 && sy == 2) row_dim = 140;          /* scanlines */
                         if (filter == 3 && sy == 2) row_dim = 190;          /* LCD grid */
                         for (int x = 0; x < SCREEN_W; x++) {
-                            uint32_t c = rgbx(src[x]);
+                            uint32_t c = lut565[src[x]];
                             uint32_t c0 = row_dim == 256 ? c : dim(c, row_dim);
                             uint32_t c2 = filter == 3 ? dim(c, row_dim * 190 >> 8) : c0;
                             dst[x * 3] = c0; dst[x * 3 + 1] = c0; dst[x * 3 + 2] = c2;
@@ -266,8 +271,8 @@ static void stop_thread(void) {
 static aaudio_data_callback_result_t audio_cb(AAudioStream *st, void *user, void *data, int32_t frames) {
     (void)st; (void)user;
     int16_t *out = data;
-    int got = paused ? 0 : zod_audio_read(out, frames);
-    if (got < frames) memset(out + got * 2, 0, (size_t)(frames - got) * 4);
+    if (paused) memset(out, 0, (size_t)frames * 4);
+    else zod_audio_stream(out, frames);
     return AAUDIO_CALLBACK_RESULT_CONTINUE;
 }
 
@@ -278,7 +283,11 @@ static void audio_open(void) {
     AAudioStreamBuilder_setFormat(b, AAUDIO_FORMAT_PCM_I16);
     AAudioStreamBuilder_setChannelCount(b, 2);
     AAudioStreamBuilder_setSampleRate(b, (int32_t)audio_rate);
-    AAudioStreamBuilder_setPerformanceMode(b, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
+    AAudioStreamBuilder_setPerformanceMode(b, AAUDIO_PERFORMANCE_MODE_NONE);      /* a roomier device buffer: the jitter buffer in the core smooths the rest */
+    {   /* setUsage needs API 28; look it up at run time (minSdk is 26) */
+        void (*set_usage)(AAudioStreamBuilder *, aaudio_usage_t) = (void (*)(AAudioStreamBuilder *, aaudio_usage_t))dlsym(RTLD_DEFAULT, "AAudioStreamBuilder_setUsage");
+        if (set_usage) set_usage(b, AAUDIO_USAGE_GAME);
+    }
     AAudioStreamBuilder_setDataCallback(b, audio_cb, NULL);
     if (AAudioStreamBuilder_openStream(b, &audio_stream) == AAUDIO_OK) AAudioStream_requestStart(audio_stream);
     else audio_stream = NULL;

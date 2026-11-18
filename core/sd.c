@@ -275,7 +275,24 @@ static void dma_mem(int ch) {
     uint32_t ccr = IOREG(base + 0x0C), sar = IOREG(base), dar = IOREG(base + 4), cnt = IOREG(base + 8) & 0xFFFFFF;
     int smod = (ccr >> 10) & 3, dmod = (ccr >> 12) & 3, set = (ccr >> 8) & 1;
     uint32_t xs = IOREG(DMA + 0x50 + set * 0x0C) & 0xFFFF, ys = IOREG(DMA + 0x54 + set * 0x0C) & 0xFFFF, ws = IOREG(DMA + 0x58 + set * 0x0C) & 0xFFFF;
-    /* fast path: both linear and both in plain memory */
+    /* fast path: both linear: copy page-sized pieces that sit in plain memory */
+    uint32_t i0 = 0;
+    if (smod == 0 && dmod == 0) {
+        while (i0 < cnt) {
+            uint32_t s = sar + i0, d = dar + i0, n = cnt - i0;
+            if (n > 0x1000 - (s & 0xFFF)) n = 0x1000 - (s & 0xFFF);
+            if (n > 0x1000 - (d & 0xFFF)) n = 0x1000 - (d & 0xFFF);
+            uint8_t *ps = dma_ptr(s, 0), *pd = dma_ptr(d, 1);
+            if (!ps || !pd || (s < d ? d - s : s - d) < n) {               /* I/O or overlapping: byte by byte */
+                for (uint32_t k = 0; k < n; k++) dma_byte_copy(s + k, d + k);
+            } else {
+                memcpy(pd, ps, n);
+                cpu_phys_written(d, n);
+            }
+            i0 += n;
+        }
+        cnt = 0;                                                         /* done: skip the generic loop */
+    }
     for (uint32_t i = 0; i < cnt; i++) {
         uint32_t so = i, doff = i;
         if (smod == 1 && xs) so = (i / xs) * ws + i % xs;
@@ -285,7 +302,7 @@ static void dma_mem(int ch) {
         dma_byte_copy(sar + so, dar + doff);
     }
     (void)ys;
-    if (sd_log) fprintf(stderr, "[DMA] ch%d mem %08x -> %08x %u bytes ccr=%x\n", ch, sar, dar, cnt, ccr);
+    if (sd_log) fprintf(stderr, "[DMA] ch%d mem %08x -> %08x %u bytes ccr=%x\n", ch, sar, dar, IOREG(base + 8) & 0xFFFFFF, ccr);
     IOREG(base + 0x0C) = ccr & ~1u;
     IOREG(DMA + 0x04) |= 1u << ch;
     dma_irq();
@@ -332,20 +349,29 @@ static uint32_t audio_w, audio_r;
 uint32_t audio_rate = 44100;
 
 static void audio_push(uint32_t pa, uint32_t len) {
-    for (uint32_t i = 0; i + 4 <= len; i += 4) {
+    uint32_t w = __atomic_load_n(&audio_w, __ATOMIC_RELAXED);
+    for (uint32_t i = 0; i + 4 <= len; ) {
         uint32_t a = pa + i;
         uint8_t *page = bus_page(a & ~0xFFFu, 0);
         if (!page) return;
+        uint32_t chunk = (0x1000 - (a & 0xFFF)) & ~3u;              /* whole frames left in this page */
+        if (chunk > len - i) chunk = (len - i) & ~3u;
+        if (!chunk) break;
         const int16_t *f = (const int16_t *)(page + (a & 0xFFF));
-        uint32_t w = __atomic_load_n(&audio_w, __ATOMIC_RELAXED), r = __atomic_load_n(&audio_r, __ATOMIC_ACQUIRE);
-        if (w - r >= AUDIO_RING) return;                      /* host isn't draining: drop */
-        uint32_t k = w % AUDIO_RING;
-        audio_ring[k * 2] = f[0]; audio_ring[k * 2 + 1] = f[1];
-        __atomic_store_n(&audio_w, w + 1, __ATOMIC_RELEASE);
+        uint32_t r = __atomic_load_n(&audio_r, __ATOMIC_ACQUIRE);
+        uint32_t room = AUDIO_RING - (w - r), n = chunk / 4;
+        if (n > room) n = room;                                    /* host isn't draining: drop the rest */
+        for (uint32_t k = 0; k < n; k++, w++) {
+            uint32_t q = w % AUDIO_RING;
+            audio_ring[q * 2] = f[k * 2]; audio_ring[q * 2 + 1] = f[k * 2 + 1];
+        }
+        __atomic_store_n(&audio_w, w, __ATOMIC_RELEASE);
+        if (n * 4 < chunk) return;
+        i += chunk;
     }
 }
 
-/* Host side: up to n stereo frames; returns how many were available. */
+/* Host side (tools): up to n stereo frames straight from the ring; returns how many were available. */
 int zod_audio_read(int16_t *out, int n) {
     int got = 0;
     uint32_t r = __atomic_load_n(&audio_r, __ATOMIC_RELAXED), w = __atomic_load_n(&audio_w, __ATOMIC_ACQUIRE);
@@ -356,6 +382,48 @@ int zod_audio_read(int16_t *out, int n) {
     }
     __atomic_store_n(&audio_r, r, __ATOMIC_RELEASE);
     return got;
+}
+
+/* Host side (device): n stereo frames for the audio device, always n of them.
+ * The emulator produces audio in bursts and sometimes runs slower than real time (heavy menus and
+ * splash screens), so the device is fed through a small jitter buffer: playback starts once about
+ * 60 ms are queued, and the playback speed is nudged by up to a few percent to keep the queue near
+ * that level instead of running dry (which sounds like stutter). Returns how many frames came
+ * from the emulator (n, or 0 while buffering). */
+#define AUDIO_TARGET 2700                     /* frames queued while playing (~60 ms at 44.1 kHz) */
+int zod_audio_stream(int16_t *out, int n) {
+    static int playing;
+    static double pos;                        /* fractional read position between frame r and r+1 */
+    static int16_t last[2];
+    uint32_t r = __atomic_load_n(&audio_r, __ATOMIC_RELAXED), w = __atomic_load_n(&audio_w, __ATOMIC_ACQUIRE);
+    uint32_t level = w - r;
+    if (!playing) {
+        if (level < AUDIO_TARGET) { memset(out, 0, (size_t)n * 4); return 0; }
+        playing = 1; pos = 0;
+    }
+    /* speed: 1.0 at the target level, +-4% across a +-target window */
+    double err = ((double)level - AUDIO_TARGET) / AUDIO_TARGET;
+    if (err > 1) err = 1;
+    if (err < -1) err = -1;
+    double step = 1.0 + 0.04 * err;
+    for (int i = 0; i < n; i++) {
+        if (w - r < 2) {                      /* ran dry: hold the last sample and rebuffer */
+            for (int j = i; j < n; j++) { out[j * 2] = last[0]; out[j * 2 + 1] = last[1]; last[0] = (int16_t)(last[0] * 7 / 8); last[1] = (int16_t)(last[1] * 7 / 8); }
+            playing = 0;
+            break;
+        }
+        uint32_t k0 = r % AUDIO_RING, k1 = (r + 1) % AUDIO_RING;
+        float f = (float)pos;
+        for (int c = 0; c < 2; c++) {
+            float v = audio_ring[k0 * 2 + c] + (audio_ring[k1 * 2 + c] - audio_ring[k0 * 2 + c]) * f;
+            out[i * 2 + c] = (int16_t)v;
+        }
+        last[0] = out[i * 2]; last[1] = out[i * 2 + 1];
+        pos += step;
+        while (pos >= 1.0) { pos -= 1.0; r++; }
+    }
+    __atomic_store_n(&audio_r, r, __ATOMIC_RELEASE);
+    return n;
 }
 
 static void audio_start(int ch) {
