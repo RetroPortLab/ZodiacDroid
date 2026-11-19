@@ -328,18 +328,6 @@ public class MainActivity extends Activity {
         screen = SCREEN_SETTINGS;
         LinearLayout list = new LinearLayout(this);
         page("Settings", list, pill("Back", v -> showHome()));
-        list.addView(sectionTitle("Handheld"));
-        View rom = row("ROM", "Raw dump or zodiac_1.1_update.prc", haveRom() ? "Loaded" : "Not set", v -> pick(PICK_ROM));
-        list.addView(rom);
-        list.addView(row("Controls", "Choose which button does what", null, v -> showControls()));
-        list.addView(row("Erase the handheld's memory", "Like a hard reset: removes the apps and data you added (save states are kept)",
-                null, v -> confirm("Erase the Zodiac's memory?",
-                        "Installed apps, settings and game progress inside the emulated Zodiac are removed. Your save states are kept.",
-                        "Erase", () -> {
-                            if (!autosaveFile().delete() && autosaveFile().exists()) toast("Couldn't erase");
-                            else toast("Memory erased; Palm OS setup runs on the next power on");
-                        })));
-
         list.addView(sectionTitle("Display"));
         LinearLayout filter = row("Screen filter", "How the 480×320 picture is scaled up", FILTERS[filterMode()], null);
         filter.setOnClickListener(v -> {
@@ -348,6 +336,24 @@ public class MainActivity extends Activity {
             setRowValue(filter, FILTERS[f]);
         });
         list.addView(filter);
+        LinearLayout stretch = row("Fill the screen", "Stretch to the full display instead of keeping 3:2",
+                prefs.getBoolean("stretch", false) ? "On" : "Off", null);
+        stretch.setOnClickListener(v -> {
+            boolean on = !prefs.getBoolean("stretch", false);
+            prefs.edit().putBoolean("stretch", on).apply();
+            setRowValue(stretch, on ? "On" : "Off");
+        });
+        list.addView(stretch);
+        LinearLayout fps = row("Show FPS", null, prefs.getBoolean("showFps", false) ? "On" : "Off", null);
+        fps.setOnClickListener(v -> {
+            boolean on = !prefs.getBoolean("showFps", false);
+            prefs.edit().putBoolean("showFps", on).apply();
+            setRowValue(fps, on ? "On" : "Off");
+        });
+        list.addView(fps);
+
+        list.addView(sectionTitle("Controls"));
+        list.addView(row("Button remap", "Choose which button does what", null, v -> showControls()));
         LinearLayout vib = row("Vibration", "Rumble when the game or Palm OS vibrates",
                 prefs.getBoolean("vibration", true) ? "On" : "Off", null);
         vib.setOnClickListener(v -> {
@@ -373,21 +379,6 @@ public class MainActivity extends Activity {
             setRowValue(gain, GAIN_NAMES[n]);
         });
         list.addView(gain);
-        LinearLayout stretch = row("Fill the screen", "Stretch to the full display instead of keeping 3:2",
-                prefs.getBoolean("stretch", false) ? "On" : "Off", null);
-        stretch.setOnClickListener(v -> {
-            boolean on = !prefs.getBoolean("stretch", false);
-            prefs.edit().putBoolean("stretch", on).apply();
-            setRowValue(stretch, on ? "On" : "Off");
-        });
-        list.addView(stretch);
-        LinearLayout fps = row("Show frame rate", null, prefs.getBoolean("showFps", false) ? "On" : "Off", null);
-        fps.setOnClickListener(v -> {
-            boolean on = !prefs.getBoolean("showFps", false);
-            prefs.edit().putBoolean("showFps", on).apply();
-            setRowValue(fps, on ? "On" : "Off");
-        });
-        list.addView(fps);
 
         list.addView(sectionTitle("Performance"));
         LinearLayout jit = row("CPU emulation", "The recompiler translates the Zodiac's ARM code for this device's CPU "
@@ -411,7 +402,18 @@ public class MainActivity extends Activity {
         });
         list.addView(clock);
 
-        list.addView(sectionTitle("Updates"));
+        list.addView(sectionTitle("System"));
+        View rom = row("ROM", "Raw dump or zodiac_1.1_update.prc", haveRom() ? "Loaded" : "Not set", v -> pick(PICK_ROM));
+        list.addView(rom);
+        list.addView(row("Erase the handheld's memory", "Like a hard reset: removes the apps and data you added (save states are kept)",
+                null, v -> confirm("Erase the Zodiac's memory?",
+                        "Installed apps, settings and game progress inside the emulated Zodiac are removed. Your save states are kept.",
+                        "Erase", () -> {
+                            if (!autosaveFile().delete() && autosaveFile().exists()) toast("Couldn't erase");
+                            else toast("Memory erased; Palm OS setup runs on the next power on");
+                        })));
+
+        list.addView(sectionTitle("About"));
         LinearLayout auto = row("Check automatically", "Looks on GitHub for a new version at most twice a day",
                 prefs.getBoolean("autoUpdate", true) ? "On" : "Off", null);
         auto.setOnClickListener(v -> {
@@ -423,8 +425,6 @@ public class MainActivity extends Activity {
         final View[] check = new View[1];
         check[0] = row("Check for updates now", "You have v" + versionName(), "", v -> checkForUpdate(check[0]));
         list.addView(check[0]);
-
-        list.addView(sectionTitle("About"));
         TextView about = text("ZodiacDroid v" + versionName() + " is an experimental Tapwave Zodiac emulator written from scratch "
                 + "(ARM920T, i.MX1 and ATI W4200). It needs your own Zodiac ROM. "
                 + "Not affiliated with Tapwave or PalmSource.", 14, SUBTEXT, false);
